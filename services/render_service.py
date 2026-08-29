@@ -111,9 +111,10 @@ class _EmojiCanvas:
 def _truncate(
     draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int
 ) -> str:
-    """超宽文本截断，尾部追加省略号。"""
+    """超宽文本截断，尾部追加省略号。多行文本先折叠为单行（textlength 不支持多行）。"""
     if not text:
         return text
+    text = " ".join(str(text).split())
     if draw.textlength(text, font=font) <= max_width:
         return text
     while text and draw.textlength(text + "…", font=font) > max_width:

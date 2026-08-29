@@ -61,7 +61,7 @@ _GITHUB_REPOS = {
 _GITHUB_BRANCH = "main"
 
 # 派生题库构建规则版本：规则变更时 +1，启动时用本地原始文件离线重建
-DERIVED_RULE = 3  # v3: 新增书下曲字段（isNewlyWrittenMusic）
+DERIVED_RULE = 5  # v5: 清洗译名/作者中的换行等空白（如 SAIRAI 末尾的换行符）
 
 _EXTRA_SOURCES = {
     "translation": "https://translation.exmeaning.com/files/translation/music.json",
@@ -490,7 +490,7 @@ class DataService:
         result: list[dict] = []
         for m in musics:
             mid = m.get("id")
-            title = m.get("title")
+            title = self._clean_text(m.get("title"))
             if mid is None or not title:
                 continue
 
@@ -510,6 +510,7 @@ class DataService:
                 artist = artist_by_id.get(m.get("creatorArtistId"))
             if not artist:
                 artist = m.get("composer") or m.get("lyricist") or "未知"
+            artist = self._clean_text(artist)
 
             bpm = self.bpm_by_id.get(mid)
             if bpm is None:
@@ -519,7 +520,7 @@ class DataService:
             if not aliases:
                 aliases = list(self.alias_by_title.get(title, []))
 
-            cn = self.cn_by_title.get(title) or title
+            cn = self._clean_text(self.cn_by_title.get(title)) or title
 
             result.append(
                 {
@@ -527,7 +528,11 @@ class DataService:
                     "title": title,
                     "cn": cn,
                     "aliases": aliases,
-                    "category": self._derive_category(vocals_by_music.get(mid, []), server),
+                    "category": self._derive_category(
+                        vocals_by_music.get(mid, []),
+                        server,
+                        bool(m.get("isNewlyWrittenMusic")),
+                    ),
                     "artist": artist,
                     "date": date_str,
                     "bpm": bpm,
@@ -540,18 +545,41 @@ class DataService:
         return result
 
     @staticmethod
-    def _derive_category(vocal_entries: list[dict], server: str) -> str:
+    @staticmethod
+    def _clean_text(value: str | None) -> str | None:
+        """清洗数据文本：去首尾空白，内部换行/制表符折叠为空格。
+
+                翻译源的部分译名带尾部换行（如 "SAIRAI
+        "），直接进入棋盘渲染
+                会让 Pillow 的 textlength 抛出多行文本异常。
+        """
+        if not value:
+            return value
+        return " ".join(str(value).split())
+
+    @staticmethod
+    def _derive_category(vocal_entries: list[dict], server: str, newly_written: bool) -> str:
         """根据 vocals 中出现的角色推导单元分类。
 
-        规则：优先看 セカイver.（musicVocalType == "sekai"）——歌曲所属单元以
-        sekai 版登场角色为准；仅当没有 sekai 版时才看其他版本。
-        例：命ばっかり 的 バーチャル・シンガーver. 登场 Leo/need 角色，
-        但 セカイver. 为 25時，必须判为 25時而不是 Leo/need。
-        取第一个出现的组合角色（characterId 1-20）所属单元；
-        若整首歌只出现虚拟歌手（21-26），归类为虚拟歌手。
+        规则：
+        1. 有 セカイver.（musicVocalType == "sekai"）→ 以 sekai 版登场角色为准
+           （例：命ばっかり 的 VS ver 登场 Leo/need 角色，但 sekai ver 是 25時 → 25時）；
+        2. 无セカイver 且为游戏原创曲（isNewlyWrittenMusic）→ 以 original_song
+           登场角色判定单元（单元原创曲均属该单元）；
+        3. 无セカイver 的翻唱曲 → 一律归虚拟歌手。翻唱的 バーチャル・シンガーver.
+           登场角色只是关联角色，不代表所属团体
+           （例：パメラ 的 VS ver 登场穂波，但游戏内属于 VirtualSinger）。
         """
         sekai_vocals = [v for v in vocal_entries if v.get("musicVocalType") == "sekai"]
-        search_pool = sekai_vocals or vocal_entries
+        if not sekai_vocals and not newly_written:
+            # 无セカイver 的翻唱曲 → 虚拟歌手
+            return _unit_display("virtual_singer", server)
+        if sekai_vocals:
+            search_pool = sekai_vocals
+        else:
+            search_pool = [
+                v for v in vocal_entries if v.get("musicVocalType") == "original_song"
+            ] or vocal_entries
         unit_key = None
         has_virtual = False
         for v in sorted(search_pool, key=lambda x: x.get("id") or 0):
@@ -565,6 +593,11 @@ class DataService:
                 elif 21 <= cid <= 26:
                     has_virtual = True
         if unit_key is None:
+            # 虚拟歌手判定扫描全部 vocals（sekai 版也可能只是 VS+单元，不含冲突信息）
+            for v in vocal_entries:
+                for c in v.get("characters", []):
+                    if 21 <= (c.get("characterId") or 0) <= 26:
+                        has_virtual = True
             if has_virtual:
                 unit_key = "virtual_singer"
             else:
