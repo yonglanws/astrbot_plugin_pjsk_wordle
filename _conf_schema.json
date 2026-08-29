@@ -61,6 +61,18 @@
     "default": true,
     "hint": "开启后任何 @机器人 的回答都至少匹配出一首最接近的歌曲；关闭则匹配不到时不作答。"
   },
+  "jacket_url_base": {
+    "description": "日服曲绘资源站点",
+    "type": "string",
+    "default": "https://storage.exmeaning.com/sekai-jp-assets",
+    "hint": "结束后展示正确答案曲绘卡片时使用的日服资源地址。"
+  },
+  "jacket_url_base_sc": {
+    "description": "国服曲绘资源站点",
+    "type": "string",
+    "default": "https://storage.exmeaning.com/sekai-sc-assets",
+    "hint": "国服题库局结束后展示正确答案曲绘卡片时使用的资源地址。"
+  },
   "connect_link_template": {
     "description": "指令连接的 markdown 模板（仅QQ官方机器人）",
     "type": "string",

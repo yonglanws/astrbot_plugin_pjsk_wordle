@@ -646,6 +646,92 @@ class RenderService:
             logger.error(f"[PJSK Wordle] 渲染帮助图失败: {e}", exc_info=True)
             return None
 
+    # ---------- 答案卡片 ----------
+
+    def render_answer_card(
+        self,
+        jacket: Image.Image | None,
+        cn: str,
+        title: str,
+        server_label: str,
+    ) -> str | None:
+        """渲染正确答案卡片：白底，左侧曲绘（无曲绘时退化为文字占位）。
+
+        cn: 中文展示名；title: 原曲名（与 cn 相同时不重复显示）。
+        """
+        try:
+            width = 760
+            padding = 36
+            jacket_size = 420
+            text_x = padding + jacket_size + 36
+            text_width = width - text_x - padding
+
+            cn = " ".join(str(cn or "").split()) or "未知"
+            title = " ".join(str(title or "").split())
+            title_line = "" if title == cn else title
+
+            img = Image.new("RGBA", (width, jacket_size + padding * 2 + 40), PAGE_BG)
+            draw = ImageDraw.Draw(img)
+
+            # 曲绘
+            if jacket is not None:
+                jacket = jacket.convert("RGB").resize((jacket_size, jacket_size), Image.LANCZOS)
+                img.paste(jacket, (padding, padding))
+                draw.rounded_rectangle(
+                    [padding, padding, padding + jacket_size, padding + jacket_size],
+                    radius=18,
+                    outline=EMPTY_STROKE,
+                    width=3,
+                )
+            else:
+                draw.rounded_rectangle(
+                    [padding, padding, padding + jacket_size, padding + jacket_size],
+                    radius=18,
+                    fill=HEADER_BG,
+                )
+                draw.text(
+                    (padding + jacket_size / 2, padding + jacket_size / 2),
+                    "无曲绘",
+                    font=self.font("header"),
+                    fill=EMPTY_DASH,
+                    anchor="mm",
+                )
+
+            # 右侧文字：标签 / 中文名（逐行填充）/ 原名
+            draw.text((text_x, padding + 8), "正确答案", font=self.font("badge"), fill=BADGE_TEXT)
+            name_size = 52
+            name_font = ImageFont.truetype(str(self.font_path), name_size)
+            y = padding + 78
+            line_height = int(name_size * 1.35)
+            remaining = cn
+            while remaining and y < padding + jacket_size - name_size:
+                line = _truncate(draw, remaining, name_font, text_width).rstrip("…")
+                draw.text((text_x, y), line, font=name_font, fill=TITLE_COLOR)
+                remaining = remaining[len(line) :]
+                y += line_height
+
+            if title_line:
+                small = self.font("cell_date")
+                title_line = _truncate(draw, title_line, small, text_width)
+                draw.text(
+                    (text_x, min(y + 6, padding + jacket_size - 24)),
+                    title_line,
+                    font=small,
+                    fill=SUBTITLE_COLOR,
+                )
+
+            draw.text(
+                (padding, padding + jacket_size + 22),
+                f"{server_label} · 正确答案",
+                font=self.font("footer"),
+                fill=FOOTER_COLOR,
+            )
+
+            return self._save(img, "answer")
+        except Exception as e:
+            logger.error(f"[PJSK Wordle] 渲染答案卡片失败: {e}", exc_info=True)
+            return None
+
     # ---------- 输出 ----------
 
     def _save(self, img: Image.Image, prefix: str) -> str:

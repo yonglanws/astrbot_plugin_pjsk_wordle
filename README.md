@@ -67,3 +67,7 @@ GitHub API 不可用（限流/断网/文件过大）时自动回退 jsDelivr CDN
 
 `Pillow`、`pilmoji`、`aiohttp`、`aiosqlite`（见 `requirements.txt`）。
 图片全部使用 Pillow 本地渲染。
+
+## 致谢
+
+部分代码及灵感参考自 [astrbot_plugin_pjsk_guess_song](https://github.com/nichinichisou0609/astrbot_plugin_pjsk_guess_song)。

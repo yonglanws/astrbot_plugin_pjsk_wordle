@@ -30,6 +30,7 @@ from astrbot.core.utils.session_waiter import (
     SessionFilter,
     session_waiter,
 )
+from PIL import Image as PILImage
 
 from .services.data_service import SERVER_JP, SERVER_SC, DataService
 from .services.db_service import DBService
@@ -710,6 +711,9 @@ class PjskWordlePlugin(Star):
             lines.append(f"正确答案：{answer_display}")
 
         lines.extend(self._build_server_footer(event, server))
+        if reason == "fail":
+            # 次数达到限制时，曲绘卡片单独占一行提示，见下方图片
+            lines.append("答案曲绘：")
 
         try:
             result = event.make_result()
@@ -721,9 +725,51 @@ class PjskWordlePlugin(Star):
         except Exception as e:
             logger.error(f"[PJSK Wordle] 发送结算消息失败: {e}", exc_info=True)
 
+        # 未猜中的结束方式（退出/超时/次数用尽）：在最下面单开一行发送正确答案曲绘卡片
+        if reason in ("fail", "quit", "timeout"):
+            try:
+                card_path = await self._render_answer_card(game, server)
+                if card_path:
+                    await event.send(event.chain_result([Comp.Image(file=card_path)]))
+            except Exception as e:
+                logger.error(f"[PJSK Wordle] 发送答案卡片失败: {e}", exc_info=True)
+
         # 自动模式续局
         if session_id in self.auto_sessions and reason in ("win", "fail"):
             self._track_task(asyncio.create_task(self._auto_next(event, session_id)))
+
+    def _jacket_base(self, server: str) -> str:
+        """曲绘资源站点（按服务器区分）。"""
+        key = "jacket_url_base_sc" if server == SERVER_SC else "jacket_url_base"
+        default = (
+            "https://storage.exmeaning.com/sekai-sc-assets"
+            if server == SERVER_SC
+            else "https://storage.exmeaning.com/sekai-jp-assets"
+        )
+        return str(self.config.get(key, "") or "").strip().rstrip("/") or default
+
+    async def _render_answer_card(self, game: WordleGame, server: str) -> str | None:
+        """渲染正确答案卡片（曲绘 + 中文名），曲绘下载失败时退化为文字卡片。"""
+        answer = game.answer
+        jacket_image = None
+        jacket_name = str(answer.get("jacket") or "").strip()
+        if jacket_name:
+            base = self._jacket_base(server)
+            url = f"{base}/music/jacket/{jacket_name}/{jacket_name}.png"
+            data = await self.data_service.fetch_bytes(url)
+            if data:
+                try:
+                    from io import BytesIO
+
+                    jacket_image = PILImage.open(BytesIO(data))
+                except Exception as e:
+                    logger.warning(f"[PJSK Wordle] 曲绘解析失败: {e}")
+        return self.render_service.render_answer_card(
+            jacket_image,
+            self._answer_display(answer),
+            str(answer.get("title") or ""),
+            SERVER_LABELS[server],
+        )
 
     def _identity_platform(self, user_id: str | None) -> str:
         """根据获胜者 ID 推断平台归属（32 位十六进制 QID 视为官方账号，其余归普通 QQ）。"""

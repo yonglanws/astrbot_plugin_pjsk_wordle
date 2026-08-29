@@ -61,7 +61,7 @@ _GITHUB_REPOS = {
 _GITHUB_BRANCH = "main"
 
 # 派生题库构建规则版本：规则变更时 +1，启动时用本地原始文件离线重建
-DERIVED_RULE = 5  # v5: 清洗译名/作者中的换行等空白（如 SAIRAI 末尾的换行符）
+DERIVED_RULE = 6  # v6: 新增曲绘资源名字段（jacket）
 
 _EXTRA_SOURCES = {
     "translation": "https://translation.exmeaning.com/files/translation/music.json",
@@ -540,6 +540,8 @@ class DataService:
                     "append": mid in append_ids,
                     # 是否为书下曲（書き下ろし，为游戏全新创作的曲目）
                     "newly_written": bool(m.get("isNewlyWrittenMusic")),
+                    # 曲绘资源名（jacket 图：{base}/music/jacket/{name}/{name}.png）
+                    "jacket": self._clean_text(m.get("assetbundleName")),
                 }
             )
         return result
@@ -647,6 +649,16 @@ class DataService:
                 },
             )
         return self._session
+
+    async def fetch_bytes(self, url: str) -> bytes | None:
+        """下载字节数据（图片等），失败返回 None。"""
+        try:
+            return await self._fetch_url(url)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"[PJSK Wordle] 下载资源失败 {url}: {e}")
+            return None
 
     async def _fetch_url(self, url: str) -> bytes:
         session = await self._get_session()
