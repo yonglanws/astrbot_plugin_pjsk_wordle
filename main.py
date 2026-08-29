@@ -585,7 +585,6 @@ class PjskWordlePlugin(Star):
         official_self_id = str(getattr(event.message_obj, "self_id", "") or "").strip() if is_official else ""
         intro = (
             "PJSK Wordle 开始！\n"
-            f"题库：{SERVER_BADGES[server]}（共 {len(songs)} 首）\n"
             f"在 {max_guesses} 次猜测内猜出目标曲目：@本机器人 + 曲名或别名进行回答，"
             "每次猜测都会返回属性反馈。"
         )
@@ -599,14 +598,12 @@ class PjskWordlePlugin(Star):
             if is_official and in_auto_mode:
                 await event.send(event.plain_result(intro))
             elif is_official and official_self_id:
-                # 官方平台以 markdown 发送，附"点击回答 / 仅退出本局 / 退出自动模式"连接
+                # 官方平台以 markdown 发送，附"点击回答 / 仅退出本局"连接
                 intro += (
                     "\n"
                     + self._build_connect_link(" ", official_self_id, show="点击回答")
                     + "  "
                     + self._build_connect_link("仅退出本局", official_self_id)
-                    + "  "
-                    + self._build_connect_link("退出自动模式", official_self_id)
                 )
                 result = event.make_result()
                 result.chain = [Comp.Plain(intro)]
