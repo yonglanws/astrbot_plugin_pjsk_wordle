@@ -1,7 +1,7 @@
 """PJSK Wordle - 项目 sekai 音乐游戏猜曲 Wordle 插件。
 
 玩法：开局后随机选定一首目标歌曲，bot 监听会话内所有消息，
-玩家直接发送曲名或别名进行猜测，共 8 次机会；每次猜测后返回
+玩家通过 @机器人 + 曲名或别名进行回答，限定次数内猜出目标曲目；每次猜测后返回
 7 个属性（曲名/上线时间/乐曲分类/作者/BPM/MASTER/APPEND）的
 绿/橙/深色 + 方向箭头反馈棋盘，全部变绿即获胜。
 
@@ -38,7 +38,7 @@ from .services.render_service import RenderService
 
 PLUGIN_NAME = "pjsk_wordle"
 PLUGIN_AUTHOR = "慵懒午睡"
-PLUGIN_DESCRIPTION = "PJSK 音乐游戏猜曲 Wordle：8 次机会，根据曲名/上线时间/分类/作者/BPM/MASTER/APPEND 反馈锁定目标曲目"
+PLUGIN_DESCRIPTION = "PJSK 音乐游戏猜曲 Wordle：限定次数内根据曲名/上线时间/书下曲/分类/作者/BPM/MASTER/APPEND 反馈锁定目标曲目"
 PLUGIN_VERSION = "1.0.0"
 PLUGIN_REPO_URL = "https://github.com/yonglanws/astrbot_plugin_pjsk_wordle"
 
@@ -145,6 +145,7 @@ class PjskWordlePlugin(Star):
             close_days=int(config.get("close_days", 180)),
             close_bpm=int(config.get("close_bpm", 10)),
             close_master=int(config.get("close_master", 1)),
+            always_match=bool(config.get("fuzzy_always_match", True)),
         )
         self.render_service = RenderService(self.resources_dir, self.plugin_dir / "output")
         self.db_service = DBService(str(self.data_dir / "wordle.db"))
@@ -683,7 +684,7 @@ class PjskWordlePlugin(Star):
 
         lines = ["Wordle 结束"]
         if game.won and reason == "win":
-            score = score_for_guess_count(game.guess_count)
+            score = score_for_guess_count(game.guess_count, game.max_guesses)
             lines.append(f"你在第 {game.guess_count} / {game.max_guesses} 次猜对了，增加{score}分")
             lines.append(f"正确答案：{answer_display}")
             try:

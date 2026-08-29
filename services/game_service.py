@@ -4,7 +4,8 @@
 - 字符串型（曲名、分类、作者、APPEND）：精确匹配 → 绿色，否则深色
 - 数值型（上线时间、BPM、MASTER）：精确匹配 → 绿色；相近 → 橙色；否则深色
 - 方向箭头（仅有序属性）：↑ 答案更晚/更高，↓ 答案更早/更低
-计分规则：第 1-2 次猜对得 4 分，3-4 次得 3 分，5-6 次得 2 分，7-8 次得 1 分，未猜对不得分。
+计分规则：把最大次数四等分，由快到慢分别得 4/3/2/1 分（默认 8 次：
+第 1-2 次得 4 分，3-4 次得 3 分，5-6 次得 2 分，7-8 次得 1 分），未猜对不得分。
 """
 
 import unicodedata
@@ -42,19 +43,17 @@ def normalize_text(text: str) -> str:
     return "".join(ch for ch in normalized if not ch.isspace() and ch not in _IGNORED_PUNCTUATION)
 
 
-def score_for_guess_count(guess_count: int) -> int:
-    """按猜对所用次数计分。"""
-    if guess_count <= 0:
+def score_for_guess_count(guess_count: int, max_guesses: int = MAX_GUESSES) -> int:
+    """按猜对所用次数计分（随自定义最大次数按比例缩放）。
+
+    把 1~max_guesses 四等分：最快的一档得 4 分，其后依次 3/2/1 分。
+    max_guesses=8 时即 第 1-2 次→4 分、3-4 次→3 分、5-6 次→2 分、7-8 次→1 分。
+    """
+    if guess_count <= 0 or max_guesses <= 0 or guess_count > max_guesses:
         return 0
-    if guess_count <= 2:
-        return 4
-    if guess_count <= 4:
-        return 3
-    if guess_count <= 6:
-        return 2
-    if guess_count <= 8:
-        return 1
-    return 0
+    quarter = max_guesses / 4
+    tier = min(int((guess_count - 1) / quarter), 3)
+    return 4 - tier
 
 
 def parse_date(date_str: str | None) -> date | None:
@@ -64,6 +63,20 @@ def parse_date(date_str: str | None) -> date | None:
         return datetime.strptime(date_str, "%Y-%m-%d").date()
     except (ValueError, TypeError):
         return None
+
+
+def _bigrams(text: str) -> frozenset:
+    """字符二元组集合（长度不足 2 时退化为单字符集合）。"""
+    if len(text) < 2:
+        return frozenset(text)
+    return frozenset(text[i : i + 2] for i in range(len(text) - 1))
+
+
+def _dice(a: frozenset, b: frozenset) -> float:
+    """二元组 Dice 系数：2|A∩B| / (|A|+|B|)，取值 0~1。"""
+    if not a or not b:
+        return 0.0
+    return 2 * len(a & b) / (len(a) + len(b))
 
 
 def _edit_distance_at_most(a: str, b: str, max_dist: int) -> int | None:
@@ -103,17 +116,23 @@ class SongMatcher:
        如把"25时的情热"打成"25时的情熟"或少打成"25时的情"），长度 ≥8 放宽到 2 个；
        多个候选时按 编辑距离小 > 曲名精确一致 > id 小 排序；
     3. 包含匹配：输入与某个别名互为包含（如只记得半个名字），
-       仅当唯一命中一首歌时才接受，存在歧义则不匹配。
-    过短的输入（<4 字符）不参与模糊层，避免短别名误命中。
+       仅当唯一命中一首歌时才接受，存在歧义则不匹配；
+    4. 兜底相似匹配（always_match=True 时启用）：对全库做字符二元组
+       重合度（Dice）+ 包含加成 + 精确编辑距离复核的综合评分，返回得分
+       最高的歌曲——保证 @机器人 的任何回答都至少匹配出一首。
+    过短的输入（<4 字符）不参与第 2/3 层，但仍会走兜底匹配。
     """
 
-    FUZZY_MIN_LENGTH = 4  # 模糊层生效的最短输入长度
+    FUZZY_MIN_LENGTH = 4  # 编辑距离/包含层生效的最短输入长度
     FUZZY_MAX_DISTANCE = 1  # 默认容错字符数
     FUZZY_MAX_DISTANCE_LONG = 2  # 长输入的容错字符数
     FUZZY_LONG_LENGTH = 8  # 触发放大容错的输入长度
+    CONTAIN_SCORE = 0.85  # 包含关系的相似度加成
+    REFINE_TOP_N = 30  # 兜底层精修的候选数量
 
-    def __init__(self, songs: list[dict]):
+    def __init__(self, songs: list[dict], always_match: bool = True):
         self.songs = songs
+        self.always_match = always_match
         self._index: dict[str, list[int]] = {}
         for song in songs:
             names = {song.get("title"), song.get("cn"), *(song.get("aliases") or [])}
@@ -125,6 +144,10 @@ class SongMatcher:
                     continue
                 self._index.setdefault(key, []).append(song["id"])
         self._by_id = {song["id"]: song for song in songs}
+        # 预计算每个键的字符二元组集合（兜底评分用）
+        self._entries: list[tuple[str, tuple[int, ...], frozenset]] = [
+            (key, tuple(ids), _bigrams(key)) for key, ids in self._index.items()
+        ]
 
     def _select(self, song_ids: set[int], query_key: str) -> dict:
         """多个候选时：曲名/中文名与查询完全一致者优先，其次 id 升序稳定排序。"""
@@ -172,14 +195,53 @@ class SongMatcher:
             if indexed_key in key or key in indexed_key:
                 hit_songs.update(id_list)
                 if len(hit_songs) > 1:
-                    return None  # 命中多首歌，歧义，宁可不作答
+                    return None if not self.always_match else self._best_effort_find(key)
         if len(hit_songs) == 1:
             return self._by_id[next(iter(hit_songs))]
+        if self.always_match:
+            return self._best_effort_find(key)
         return None
+
+    def _best_effort_find(self, key: str) -> dict:
+        """兜底相似匹配：全库综合评分，返回得分最高的歌曲（保证有结果）。
+
+        评分 = max(字符二元组 Dice 重合度, 包含加成, 归一化编辑距离)，
+        编辑距离仅对 Dice 最高的前 REFINE_TOP_N 个候选做精修以控制耗时。
+        同分时按 曲名精确一致 > id 小 决出。
+        """
+        query_bigrams = _bigrams(key)
+        scored: list[tuple[float, str, tuple[int, ...]]] = []
+        for indexed_key, ids, key_bigrams in self._entries:
+            score = _dice(query_bigrams, key_bigrams)
+            if indexed_key in key or key in indexed_key:
+                ratio = min(len(indexed_key), len(key)) / max(len(indexed_key), len(key))
+                score = max(score, self.CONTAIN_SCORE + 0.1 * ratio)
+            scored.append((score, indexed_key, ids))
+        scored.sort(key=lambda t: -t[0])
+
+        refined: list[tuple[float, str, tuple[int, ...]]] = []
+        for score, indexed_key, ids in scored[: self.REFINE_TOP_N]:
+            distance = _edit_distance_at_most(indexed_key, key, max(len(indexed_key), len(key)))
+            if distance is not None:
+                distance_score = 1 - distance / max(len(indexed_key), len(key))
+                score = max(score, distance_score)
+            refined.append((score, indexed_key, ids))
+
+        refined.sort(key=lambda t: -t[0])
+        best_score = refined[0][0]
+        best_ids: set[int] = set()
+        for score, _, ids in refined:
+            if score < best_score:
+                break
+            best_ids.update(ids)
+        return self._select(best_ids, key)
 
     def find(self, query: str) -> dict | None:
         key = normalize_text(query)
         if not key:
+            # 规范化后为空（纯标点/空白）：兜底返回第一首，保证有结果
+            if self.always_match and self.songs:
+                return self.songs[0]
             return None
 
         ids = self._index.get(key)
@@ -188,6 +250,9 @@ class SongMatcher:
 
         if len(key) >= self.FUZZY_MIN_LENGTH:
             return self._fuzzy_find(key)
+        if self.always_match:
+            # 短输入不走编辑距离/包含层，但仍保底返回最接近的一首
+            return self._best_effort_find(key)
         return None
 
 
@@ -385,15 +450,17 @@ class GameService:
         close_days: int = DEFAULT_CLOSE_DAYS,
         close_bpm: int = DEFAULT_CLOSE_BPM,
         close_master: int = DEFAULT_CLOSE_MASTER,
+        always_match: bool = True,
     ):
         self.close_days = close_days
         self.close_bpm = close_bpm
         self.close_master = close_master
+        self.always_match = always_match
         self._matchers: dict[str, SongMatcher] = {}
 
     def update_songs(self, server: str, songs: list[dict]):
         """题库更新后重建对应服务器的匹配器。"""
-        self._matchers[server] = SongMatcher(songs)
+        self._matchers[server] = SongMatcher(songs, always_match=self.always_match)
 
     def get_matcher(self, server: str) -> SongMatcher | None:
         return self._matchers.get(server)

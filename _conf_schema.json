@@ -18,8 +18,8 @@
   "max_guesses": {
     "description": "每局最大猜测次数",
     "type": "int",
-    "default": 8,
-    "hint": "超过此次数仍未全部猜对则本局失败。"
+    "default": 12,
+    "hint": "每局的最大猜测次数。计分按此次数四等分：由快到慢得 4/3/2/1 分。"
   },
   "game_cooldown_seconds": {
     "description": "两局之间的冷却时间（秒）",
@@ -54,6 +54,12 @@
     "type": "int",
     "default": 1,
     "hint": "猜测与答案的 MASTER 等级相差不超过该值时显示橙色。"
+  },
+  "fuzzy_always_match": {
+    "description": "模糊匹配保底命中（@机器人回答必出结果）",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后任何 @机器人 的回答都至少匹配出一首最接近的歌曲；关闭则匹配不到时不作答。"
   },
   "connect_link_template": {
     "description": "指令连接的 markdown 模板（仅QQ官方机器人）",
