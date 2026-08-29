@@ -51,10 +51,10 @@ PJSK（プロジェクトセカイ / 世界计划）音乐游戏猜曲 **Wordle*
 
 游戏中发送 `退出` 可结束当前局。
 
-## 题库
+## 资源
 
-- 日服：[Team-Haruki/haruki-sekai-master](https://github.com/Team-Haruki/haruki-sekai-master)
-- 国服：[Team-Haruki/haruki-sekai-sc-master](https://github.com/Team-Haruki/haruki-sekai-sc-master)
+- 日服master：[Team-Haruki/haruki-sekai-master](https://github.com/Team-Haruki/haruki-sekai-master)
+- 国服master：[Team-Haruki/haruki-sekai-sc-master](https://github.com/Team-Haruki/haruki-sekai-sc-master)
 - 中文译名：`translation.exmeaning.com`（Moesekai 翻译源）
 - 歌曲别名：`moe.exmeaning.com/data/music_alias`（Moesekai 别名源）
 - BPM：`moe.exmeaning.com/data/music_bpm`
@@ -70,4 +70,4 @@ GitHub API 不可用（限流/断网/文件过大）时自动回退 jsDelivr CDN
 
 ## 致谢
 
-部分代码及灵感参考自 [astrbot_plugin_pjsk_guess_song](https://github.com/nichinichisou0609/astrbot_plugin_pjsk_guess_song)。
+部分代码及架构参考自 [astrbot_plugin_pjsk_guess_song](https://github.com/nichinichisou0609/astrbot_plugin_pjsk_guess_song)。在此致谢

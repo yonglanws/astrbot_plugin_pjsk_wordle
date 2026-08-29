@@ -257,12 +257,12 @@ class PjskWordlePlugin(Star):
 
     @filter.command("自动wordle", alias={"自动Wordle", "自动pjskwordle"})
     async def start_auto_wordle(self, event: AstrMessageEvent):
-        """进入自动模式：每局结束后自动开始下一局，发送 退出 停止。"""
+        """进入自动模式：每局结束后自动开始下一局，发送 退出自动模式 停止。"""
         session_id = _get_normalized_session_id(event)
         self.auto_sessions[session_id] = True
         await event.send(
             event.plain_result(
-                "已开启自动 Wordle 模式！每局结束后将自动开始下一局，发送“退出”可停止。"
+                "已开启自动 Wordle 模式！每局结束后将自动开始下一局，发送“退出自动模式”可停止。"
             )
         )
         async with self._get_session_lock(session_id):
@@ -499,7 +499,7 @@ class PjskWordlePlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
-        """仅处理 @机器人 的消息：有对局时视为玩家的猜测回答，包含"退出"则结束对局。
+        """仅处理 @机器人 的消息：有对局时视为玩家的猜测回答，"仅退出本局"结束本局、"退出自动模式"停止续局。
 
         未 @ 机器人的普通聊天完全不参与游戏。
         """
@@ -516,16 +516,21 @@ class PjskWordlePlugin(Star):
         session_id = _get_normalized_session_id(event)
         sess = self.games.get(session_id)
         if sess is None:
-            if session_id in self.auto_sessions and "退出" in text:
-                self.auto_sessions.pop(session_id, None)
+            # 退出自动模式：任何时候可触发（无对局时也响应）
+            if text in ["退出自动模式", "退出"] and self.auto_sessions.pop(session_id, None) is not None:
                 await event.send(event.plain_result("已退出自动 Wordle 模式。"))
             return
 
-        # 退出本局（同时停止自动模式）
-        if "退出" in text:
-            self.auto_sessions.pop(session_id, None)
+        # 仅退出本局：只在游玩时生效，立即结束当前对局（不影响自动模式）
+        if text == "仅退出本局":
             sess["game"].forfeit("quit")
             await self._finish_game(event, session_id, reason="quit")
+            return
+
+        # 退出自动模式：本局继续、自动模式停止
+        if text in ["退出自动模式", "退出"]:
+            if self.auto_sessions.pop(session_id, None) is not None:
+                await event.send(event.plain_result("已退出自动 Wordle 模式。"))
             return
 
         await self._process_guess(event, session_id, sess, text)
@@ -576,23 +581,30 @@ class PjskWordlePlugin(Star):
             [], max_guesses, SERVER_BADGES[server], version
         )
         is_official = self._get_platform_name(event) == OFFICIAL_PLATFORM_NAME
+        in_auto_mode = bool(self.auto_sessions.get(session_id))
+        official_self_id = str(getattr(event.message_obj, "self_id", "") or "").strip() if is_official else ""
         intro = (
             "PJSK Wordle 开始！\n"
             f"题库：{SERVER_BADGES[server]}（共 {len(songs)} 首）\n"
             f"在 {max_guesses} 次猜测内猜出目标曲目：@本机器人 + 曲名或别名进行回答，"
             "每次猜测都会返回属性反馈。"
         )
+        if in_auto_mode:
+            # 自动模式：不出现 markdown 按钮，用文字提示退出方式
+            intro += "\n发送「仅退出本局」可结束本局，发送「退出自动模式」可停止自动模式。"
         try:
-            if is_official:
-                # 官方平台以 markdown 发送，末尾并排"回答 / 退出"两个连接
-                self_id = str(getattr(event.message_obj, "self_id", "") or "").strip()
-                if self_id:
-                    intro += (
-                        "\n"
-                        + self._build_connect_link(" ", self_id, show="点击回答")
-                        + "  "
-                        + self._build_connect_link("退出", self_id, show="退出本局")
-                    )
+            if is_official and in_auto_mode:
+                await event.send(event.plain_result(intro))
+            elif is_official and official_self_id:
+                # 官方平台以 markdown 发送，附"点击回答 / 仅退出本局 / 退出自动模式"连接
+                intro += (
+                    "\n"
+                    + self._build_connect_link(" ", official_self_id, show="点击回答")
+                    + "  "
+                    + self._build_connect_link("仅退出本局", official_self_id)
+                    + "  "
+                    + self._build_connect_link("退出自动模式", official_self_id)
+                )
                 result = event.make_result()
                 result.chain = [Comp.Plain(intro)]
                 result.use_markdown(True)
@@ -701,7 +713,7 @@ class PjskWordlePlugin(Star):
             except Exception as e:
                 logger.error(f"[PJSK Wordle] 记录战绩失败: {e}", exc_info=True)
         elif reason == "quit":
-            lines.append("本局已结束（退出）")
+            lines.append("本局已结束（仅退出本局）")
             lines.append(f"正确答案：{answer_display}")
         elif reason == "timeout":
             lines.append("长时间没有猜测，本局已超时结束")
@@ -710,7 +722,11 @@ class PjskWordlePlugin(Star):
             lines.append(f"{game.max_guesses} 次机会已用完，很遗憾没有猜对")
             lines.append(f"正确答案：{answer_display}")
 
-        lines.extend(self._build_server_footer(event, server))
+        if session_id in self.auto_sessions:
+            # 自动模式：只显示结果与答案，随后自动开始下一局，不出现 markdown 按钮
+            lines.append("即将开始下一局，发送「退出自动模式」可停止自动模式。")
+        else:
+            lines.extend(self._build_server_footer(event, server))
         if reason == "fail":
             # 次数达到限制时，曲绘卡片单独占一行提示，见下方图片
             lines.append("答案曲绘：")
@@ -718,8 +734,8 @@ class PjskWordlePlugin(Star):
         try:
             result = event.make_result()
             result.chain = [Comp.Plain("\n".join(lines))]
-            if self._get_platform_name(event) == OFFICIAL_PLATFORM_NAME:
-                # QQ 官方平台以 markdown 渲染结算消息，连接入口以 markdown 链接展示
+            if self._get_platform_name(event) == OFFICIAL_PLATFORM_NAME and session_id not in self.auto_sessions:
+                # QQ 官方平台以 markdown 渲染结算消息，连接入口以 markdown 链接展示（自动模式除外）
                 result.use_markdown(True)
             await event.send(result)
         except Exception as e:
@@ -858,7 +874,7 @@ class PjskWordlePlugin(Star):
         await asyncio.sleep(delay)
         if session_id not in self.auto_sessions or session_id in self.games:
             return
-        await event.send(event.plain_result("下一局 Wordle 即将开始……（发送 退出 可停止自动模式）"))
+        await event.send(event.plain_result("下一局 Wordle 即将开始……（发送「退出自动模式」可停止自动模式）"))
         async with self._get_session_lock(session_id):
             if session_id not in self.games and session_id in self.auto_sessions:
                 await self._start_round(event, session_id, auto=True)
