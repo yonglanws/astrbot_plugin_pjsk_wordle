@@ -524,8 +524,8 @@ class PjskWordlePlugin(Star):
                 await event.send(event.plain_result("已退出自动 Wordle 模式。"))
             return
 
-        # 仅退出本局：只在游玩时生效，立即结束当前对局（不影响自动模式）
-        if text in ["仅退出本局", "退出本局"]:
+        # 仅退出本局：支持「仅退出本局」、「退出本局」；若非自动模式，发送「退出」也视为退出本局
+        if text in ["仅退出本局", "退出本局"] or (text == "退出" and session_id not in self.auto_sessions):
             sess["game"].forfeit("quit")
             await self._finish_game(event, session_id, reason="quit")
             return
