@@ -582,34 +582,42 @@ class PjskWordlePlugin(Star):
         )
         is_official = self._get_platform_name(event) == OFFICIAL_PLATFORM_NAME
         in_auto_mode = bool(self.auto_sessions.get(session_id))
-        official_self_id = str(getattr(event.message_obj, "self_id", "") or "").strip() if is_official else ""
+        official_self_id = self._get_official_connect_id(event) if is_official else ""
         intro = (
             "PJSK Wordle 开始！\n"
             f"在 {max_guesses} 次猜测内猜出目标曲目：@本机器人 + 曲名或别名进行回答，"
             "每次猜测都会返回属性反馈。"
         )
-        if in_auto_mode:
-            # 自动模式：不出现 markdown 按钮，用文字提示退出方式
-            intro += "\n发送「退出」可结束自动模式，发送「退出本局」可提前结束这一局。"
-        elif not is_official or not official_self_id:
-            # 普通模式（非官机）：提示「退出本局」指令可提前结束这一局
-            intro += "\n发送「退出本局」可提前结束这一局。"
         try:
-            if is_official and in_auto_mode:
-                await event.send(event.plain_result(intro))
-            elif is_official and official_self_id:
-                # 官方平台以 markdown 发送，附"点击回答 / 仅退出本局"连接
-                intro += (
-                    "\n"
-                    + self._build_connect_link(" ", official_self_id, show="点击回答")
-                    + "  "
-                    + self._build_connect_link("仅退出本局", official_self_id)
-                )
+            if is_official:
+                # 官方平台以 markdown 发送
+                if in_auto_mode:
+                    intro += (
+                        "\n"
+                        + self._build_connect_link(" ", official_self_id, show="点击回答")
+                        + "  "
+                        + self._build_connect_link("退出本局", official_self_id)
+                        + "  "
+                        + self._build_connect_link("退出自动模式", official_self_id)
+                    )
+                else:
+                    intro += (
+                        "\n"
+                        + self._build_connect_link(" ", official_self_id, show="点击回答")
+                        + "  "
+                        + self._build_connect_link("退出本局", official_self_id)
+                    )
                 result = event.make_result()
                 result.chain = [Comp.Plain(intro)]
                 result.use_markdown(True)
                 await event.send(result)
+            elif in_auto_mode:
+                # 自动模式（非官机）：文字提示退出方式
+                intro += "\n发送「退出」可结束自动模式，发送「退出本局」可提前结束这一局。"
+                await event.send(event.plain_result(intro))
             else:
+                # 普通模式（非官机）：提示「退出本局」指令可提前结束这一局
+                intro += "\n发送「退出本局」可提前结束这一局。"
                 await event.send(event.plain_result(intro))
             if board_path:
                 await event.send(event.chain_result([Comp.Image(file=board_path)]))
@@ -786,6 +794,10 @@ class PjskWordlePlugin(Star):
             str(answer.get("title") or ""),
             SERVER_LABELS[server],
         )
+
+    def _get_official_connect_id(self, event: AstrMessageEvent) -> str:
+        """返回官机连接模板的兼容 ID；默认 qqbot-cmd-input 不依赖该值。"""
+        return str(getattr(event.message_obj, "self_id", "") or "").strip() or "qq_official"
 
     def _identity_platform(self, user_id: str | None) -> str:
         """根据获胜者 ID 推断平台归属（32 位十六进制 QID 视为官方账号，其余归普通 QQ）。"""
