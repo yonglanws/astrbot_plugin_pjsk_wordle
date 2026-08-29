@@ -1,0 +1,93 @@
+{
+  "default_server": {
+    "description": "默认题库服务器",
+    "type": "string",
+    "options": [
+      "jp",
+      "sc"
+    ],
+    "default": "jp",
+    "hint": "jp=日服题库（haruki-sekai-master），sc=国服题库（haruki-sekai-sc-master）。群内可用指令临时切换。"
+  },
+  "update_interval_hours": {
+    "description": "题库自动更新间隔（小时）",
+    "type": "int",
+    "default": 24,
+    "hint": "题库每 24 小时自动更新一次，仅拉取必要的 JSON 文件。"
+  },
+  "max_guesses": {
+    "description": "每局最大猜测次数",
+    "type": "int",
+    "default": 8,
+    "hint": "超过此次数仍未全部猜对则本局失败。"
+  },
+  "game_cooldown_seconds": {
+    "description": "两局之间的冷却时间（秒）",
+    "type": "int",
+    "default": 3
+  },
+  "game_idle_timeout_seconds": {
+    "description": "无猜测自动结束时间（秒）",
+    "type": "int",
+    "default": 300,
+    "hint": "一局内持续没有玩家猜中歌曲达该时长后，自动公布答案并结束。"
+  },
+  "auto_next_delay_seconds": {
+    "description": "自动模式下两局之间的间隔（秒）",
+    "type": "int",
+    "default": 6
+  },
+  "close_days": {
+    "description": "上线时间判定为“数值相近”的天数阈值",
+    "type": "int",
+    "default": 180,
+    "hint": "猜测与答案的上线时间相差不超过该天数时显示橙色。"
+  },
+  "close_bpm": {
+    "description": "BPM 判定为“数值相近”的阈值",
+    "type": "int",
+    "default": 10,
+    "hint": "猜测与答案的 BPM 相差不超过该值时显示橙色。"
+  },
+  "close_master": {
+    "description": "MASTER 难度判定为“数值相近”的阈值",
+    "type": "int",
+    "default": 1,
+    "hint": "猜测与答案的 MASTER 等级相差不超过该值时显示橙色。"
+  },
+  "connect_link_template": {
+    "description": "指令连接的 markdown 模板（仅QQ官方机器人）",
+    "type": "string",
+    "default": "<qqbot-cmd-input text=\"{encoded_command}\" show=\"{encoded_name}\" />",
+    "hint": "结算消息中连接入口的 markdown 模板（QQ 官方 markdown 参数指令标签，点击后自动在聊天框填入指令（QQ 客户端发送时自动 @ 官机）。占位符：{name}=显示名，{command}=指令原文，{self_id}=官机ID，{at_text}=@官机+指令，{encoded_name}/{encoded_command}/{encoded_at_text}=对应 URL 编码。清空该配置则退回纯文本“（连接：@官机 指令）”形式。"
+  },
+  "ranking_display_count": {
+    "description": "排行榜显示人数",
+    "type": "int",
+    "default": 10
+  },
+  "group_whitelist": {
+    "description": "群聊白名单",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [],
+    "hint": "允许使用本插件的群聊 ID 列表，留空表示所有群聊可用。"
+  },
+  "whitelist_reject_message": {
+    "description": "非白名单群聊提示文本",
+    "type": "string",
+    "default": "",
+    "hint": "非白名单群聊触发插件时的提示消息，留空则不提示。"
+  },
+  "super_users": {
+    "description": "超级用户 ID 列表",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [],
+    "hint": "可使用 更新wordle题库 等管理指令的用户 QQ 号。"
+  }
+}

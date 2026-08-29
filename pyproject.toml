@@ -1,0 +1,21 @@
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["output", "tests/_render_out", "tests/_integration"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # 行长交给 formatter 管理
+    "B008",  # AstrBot 装饰器风格需要在函数定义中调用
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["RUF012", "B011"]

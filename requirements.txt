@@ -1,0 +1,4 @@
+Pillow
+pilmoji
+aiohttp
+aiosqlite

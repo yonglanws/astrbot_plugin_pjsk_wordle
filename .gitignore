@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+output/
+tests/_render_out/
+tests/_integration/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
