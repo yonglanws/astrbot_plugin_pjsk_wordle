@@ -522,7 +522,7 @@ class PjskWordlePlugin(Star):
             return
 
         # 仅退出本局：只在游玩时生效，立即结束当前对局（不影响自动模式）
-        if text == "仅退出本局":
+        if text in ["仅退出本局", "退出本局"]:
             sess["game"].forfeit("quit")
             await self._finish_game(event, session_id, reason="quit")
             return
@@ -591,7 +591,10 @@ class PjskWordlePlugin(Star):
         )
         if in_auto_mode:
             # 自动模式：不出现 markdown 按钮，用文字提示退出方式
-            intro += "\n发送「仅退出本局」可结束本局，发送「退出自动模式」可停止自动模式。"
+            intro += "\n发送「退出」可结束自动模式，发送「退出本局」可提前结束这一局。"
+        elif not is_official or not official_self_id:
+            # 普通模式（非官机）：提示「退出本局」指令可提前结束这一局
+            intro += "\n发送「退出本局」可提前结束这一局。"
         try:
             if is_official and in_auto_mode:
                 await event.send(event.plain_result(intro))
@@ -825,19 +828,13 @@ class PjskWordlePlugin(Star):
         )
 
     def _get_quick_entries(self) -> list[str]:
-        """读取快捷入口配置；Wordle 固定排在最后，旧默认列表自动补入 Wordle。"""
-        wordle = "Wordle"
-        default = ["猜歌", "猜曲绘", "猜卡面", "歌词猜曲", wordle]
-        legacy = ["猜歌", "猜曲绘", "猜卡面", "歌词猜曲"]
+        """读取快捷入口配置；若列表为空则不显示快捷入口。"""
         entries = self.config.get("quick_entries")
-        if entries is None:
-            return list(default)
+        if not entries:
+            return []
         cleaned = [str(x).strip() for x in entries if str(x).strip()]
-        # AstrBot 不会用新默认值覆盖已保存的旧配置，对未自定义的旧默认做透明升级
-        if cleaned == legacy:
-            return list(default)
+        wordle = "Wordle"
         if wordle in cleaned:
-            # Wordle 统一放最后
             cleaned = [x for x in cleaned if x != wordle] + [wordle]
         return cleaned
 

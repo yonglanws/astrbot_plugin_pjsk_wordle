@@ -33,7 +33,7 @@ PJSK（プロジェクトセカイ / 世界计划）音乐游戏猜曲 **Wordle*
 - QQ 官方机器人：结算消息以 markdown 发送，连接入口使用 QQ 官方 markdown 参数指令标签
   `<qqbot-cmd-input text="URL编码的@官机+指令" show="URL编码的显示名" />`
   （点击自动在聊天框 @官机 + 指令），并附其他 PJSK 娱乐插件的快捷入口
-  （猜歌/猜曲绘/猜卡面/歌词猜曲；标签模板可用 `connect_link_template` 配置适配）；
+  （猜歌/猜曲绘/猜卡面/歌词猜曲；快捷入口列表可用 `quick_entries` 配置，默认为空，标签模板可用 `connect_link_template` 配置适配）；
 - 普通 QQ：仅提示切换题库指令。
 
 ## 指令
