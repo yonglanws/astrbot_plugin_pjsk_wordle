@@ -517,7 +517,10 @@ class PjskWordlePlugin(Star):
         sess = self.games.get(session_id)
         if sess is None:
             # 退出自动模式：任何时候可触发（无对局时也响应）
-            if text in ["退出自动模式", "退出"] and self.auto_sessions.pop(session_id, None) is not None:
+            if (
+                text in ["退出自动模式", "退出"]
+                and self.auto_sessions.pop(session_id, None) is not None
+            ):
                 await event.send(event.plain_result("已退出自动 Wordle 模式。"))
             return
 
@@ -669,12 +672,19 @@ class PjskWordlePlugin(Star):
 
         game.guess(song, player_id, player_name)
 
+        # 未猜中结束（fail 满次）时，棋盘上揭晓正确答案参数行（全绿）
+        # 满次时若已满 max_rows，render_board 会自动单开第 max_rows+1 行绘制该答案行
+        answer_row = None
+        if game.is_finished() and not game.won:
+            answer_row = self.game_service.compare(game.answer, game.answer)
+
         version = self.data_service.get_version(server)
         board_path = self.render_service.render_board(
             game.rows,
             game.max_guesses,
             SERVER_BADGES[server],
             version,
+            answer_row=answer_row,
         )
         try:
             if board_path:
@@ -735,28 +745,37 @@ class PjskWordlePlugin(Star):
             lines.append("即将开始下一局，发送「退出自动模式」可停止自动模式。")
         else:
             lines.extend(self._build_server_footer(event, server))
-        if reason == "fail":
-            # 次数达到限制时，曲绘卡片单独占一行提示，见下方图片
-            lines.append("答案曲绘：")
+        # 退出/超时时：主动发送带答案参数行（全绿）的棋盘图片
+        # 若用户作答行数 < max_rows，直接画在用户作答行下面（替代原本的空行）
+        # 若已满限制（fail，已在 _process_guess 渲染发送过），不再重复发送
+        if reason in ("quit", "timeout"):
+            try:
+                answer_row = self.game_service.compare(game.answer, game.answer)
+                version = self.data_service.get_version(server)
+                board_path = self.render_service.render_board(
+                    game.rows,
+                    game.max_guesses,
+                    SERVER_BADGES[server],
+                    version,
+                    answer_row=answer_row,
+                )
+                if board_path:
+                    await event.send(event.chain_result([Comp.Image(file=board_path)]))
+            except Exception as e:
+                logger.error(f"[PJSK Wordle] 发送揭晓棋盘失败: {e}", exc_info=True)
 
         try:
             result = event.make_result()
             result.chain = [Comp.Plain("\n".join(lines))]
-            if self._get_platform_name(event) == OFFICIAL_PLATFORM_NAME and session_id not in self.auto_sessions:
+            if (
+                self._get_platform_name(event) == OFFICIAL_PLATFORM_NAME
+                and session_id not in self.auto_sessions
+            ):
                 # QQ 官方平台以 markdown 渲染结算消息，连接入口以 markdown 链接展示（自动模式除外）
                 result.use_markdown(True)
             await event.send(result)
         except Exception as e:
             logger.error(f"[PJSK Wordle] 发送结算消息失败: {e}", exc_info=True)
-
-        # 未猜中的结束方式（退出/超时/次数用尽）：在最下面单开一行发送正确答案曲绘卡片
-        if reason in ("fail", "quit", "timeout"):
-            try:
-                card_path = await self._render_answer_card(game, server)
-                if card_path:
-                    await event.send(event.chain_result([Comp.Image(file=card_path)]))
-            except Exception as e:
-                logger.error(f"[PJSK Wordle] 发送答案卡片失败: {e}", exc_info=True)
 
         # 自动模式续局
         if session_id in self.auto_sessions and reason in ("win", "fail"):
@@ -880,7 +899,9 @@ class PjskWordlePlugin(Star):
         await asyncio.sleep(delay)
         if session_id not in self.auto_sessions or session_id in self.games:
             return
-        await event.send(event.plain_result("下一局 Wordle 即将开始……（发送「退出自动模式」可停止自动模式）"))
+        await event.send(
+            event.plain_result("下一局 Wordle 即将开始……（发送「退出自动模式」可停止自动模式）")
+        )
         async with self._get_session_lock(session_id):
             if session_id not in self.games and session_id in self.auto_sessions:
                 await self._start_round(event, session_id, auto=True)

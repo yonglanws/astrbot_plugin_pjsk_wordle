@@ -171,8 +171,15 @@ class RenderService:
         max_rows: int,
         server_label: str,
         version: str,
+        answer_row: list[dict] | None = None,
     ) -> str | None:
-        """渲染 Wordle 棋盘。rows: 已提交的猜测行（每行 7 格 {text,color,arrow}）。"""
+        """渲染 Wordle 棋盘。
+
+        rows: 已提交的猜测行（每行 8 格 {text,color,arrow}）。
+        answer_row: 退出/超时/满次时揭晓的正确答案属性行（8 格全绿），
+          - 若当前行数 < max_rows：直接画在用户最后作答行的下一行（替代原本的空行）；
+          - 若当前已满 max_rows：在棋盘最下方单开第 max_rows+1 行绘制该答案行。
+        """
         try:
             margin_x = BOARD_MARGIN_X
             gap = BOARD_GAP
@@ -185,7 +192,12 @@ class RenderService:
             row_h = 94
             row_gap = 12
             rows_top = header_y + header_h + 14
-            board_h = max_rows * row_h + (max_rows - 1) * row_gap
+
+            # 次数用尽且附带答案行时，棋盘单开额外一行
+            extra_answer_row = answer_row is not None and len(rows) >= max_rows
+            total_board_rows = max_rows + (1 if extra_answer_row else 0)
+
+            board_h = total_board_rows * row_h + (total_board_rows - 1) * row_gap
             legend_y = rows_top + board_h + 34
             height = legend_y + 88  # 底部角标略往下
 
@@ -268,15 +280,22 @@ class RenderService:
                 )
                 x += col_w + gap
 
-            # --- 猜测行与空行 ---
+            # --- 猜测行、答案行与空行 ---
             cell_font = self.font("cell")
             date_font = self.font("cell_date")
-            for r in range(max_rows):
+            answer_inserted = False
+            for r in range(total_board_rows):
                 y = rows_top + r * (row_h + row_gap)
                 if r < len(rows):
                     self._draw_guess_row(
                         draw, rows[r], col_x, col_widths, y, row_h, cell_font, date_font
                     )
+                elif answer_row is not None and not answer_inserted:
+                    # 紧跟在作答行下面绘制全绿答案行（未满时替代空行，满时单开一行）
+                    self._draw_guess_row(
+                        draw, answer_row, col_x, col_widths, y, row_h, cell_font, date_font
+                    )
+                    answer_inserted = True
                 else:
                     self._draw_empty_row(draw, col_x, col_widths, y, row_h)
 
