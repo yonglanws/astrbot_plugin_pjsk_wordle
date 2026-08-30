@@ -65,7 +65,7 @@ _GITHUB_REPOS = {
 _GITHUB_BRANCH = "main"
 
 # 派生题库构建规则版本：规则变更时 +1，启动时用本地原始文件离线重建
-DERIVED_RULE = 8  # v8: 支持 WorldLink 专属分类识别与跨团合唱精确分类
+DERIVED_RULE = 9  # v9: 修正歌曲上线日期不早于公测时间（日服 2020-09-30，国服 2025-03-27）
 
 _EXTRA_SOURCES = {
     "translation": "https://translation.exmeaning.com/files/translation/music.json",
@@ -81,6 +81,12 @@ _JSDELIVR_TPL = "https://cdn.jsdelivr.net/gh/{repo}@{branch}/{path}"
 _SERVER_TZ = {
     SERVER_JP: timezone(timedelta(hours=9)),
     SERVER_SC: timezone(timedelta(hours=8)),
+}
+
+# 各服游戏正式公测上线日期（任何早于公测日期的歌曲统一修正为公测日期）
+_SERVER_LAUNCH_DATE = {
+    SERVER_JP: "2020-09-30",
+    SERVER_SC: "2025-03-27",
 }
 
 # 角色分组映射：characterId -> 单元
@@ -594,11 +600,14 @@ class DataService:
                 continue
 
             published_at = m.get("publishedAt") or m.get("releasedAt")
+            launch_date = _SERVER_LAUNCH_DATE.get(server)
             if isinstance(published_at, (int, float)) and published_at > 0:
                 dt = datetime.fromtimestamp(published_at / 1000, tz=tz)
                 date_str = dt.strftime("%Y-%m-%d")
+                if launch_date and date_str < launch_date:
+                    date_str = launch_date
             else:
-                date_str = None
+                date_str = launch_date
 
             # 作者：国服 musics 内嵌 infos.creator；日服用 musicArtists 关联表
             artist = None
