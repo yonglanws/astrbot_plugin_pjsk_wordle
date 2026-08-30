@@ -56,7 +56,7 @@ PJSK（プロジェクトセカイ / 世界计划）音乐游戏猜曲 **Wordle*
 - 日服master：[Team-Haruki/haruki-sekai-master](https://github.com/Team-Haruki/haruki-sekai-master)
 - 国服master：[Team-Haruki/haruki-sekai-sc-master](https://github.com/Team-Haruki/haruki-sekai-sc-master)
 - 中文译名：`translation.exmeaning.com`（Moesekai 翻译源）
-- 歌曲别名：`moe.exmeaning.com/data/music_alias`（Moesekai 别名源）
+- 歌曲别名：`moe.exmeaning.com/data/music_alias`（Moesekai 别名源）+ `neo-api.haruki.seiunx.com`（Haruki 别名源，自动合并）
 - BPM：`moe.exmeaning.com/data/music_bpm`
 
 仅拉取上述必要 JSON 文件（含 `versions/current_version.json`），**优先走 GitHub Contents API**；题库版本号显示 `dataVersion`（如 6.8.0.12），

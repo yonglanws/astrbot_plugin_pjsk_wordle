@@ -73,6 +73,8 @@ _EXTRA_SOURCES = {
     "bpm": "https://moe.exmeaning.com/data/music_bpm/music_bpms.json",
 }
 
+_HARUKI_ALIAS_API_TPL = "https://neo-api.haruki.seiunx.com/api/bot/v2/pjsk/alias/music/{id}"
+
 _JSDELIVR_TPL = "https://cdn.jsdelivr.net/gh/{repo}@{branch}/{path}"
 
 # 服务器本地时区（上线时间按服务器时区取日期）
@@ -373,13 +375,109 @@ class DataService:
 
     # ---------- 补充数据（别名 / BPM / 翻译） ----------
 
+    async def _fetch_haruki_single_alias(
+        self, session: aiohttp.ClientSession, mid: int, sem: asyncio.Semaphore
+    ) -> tuple[int, list[str]]:
+        """从 Haruki API 单首拉取别名列表。"""
+        url = _HARUKI_ALIAS_API_TPL.format(id=mid)
+        async with sem:
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status == 200:
+                        payload = await resp.json()
+                        if (
+                            isinstance(payload, dict)
+                            and payload.get("status") == 200
+                            and isinstance(payload.get("data"), dict)
+                        ):
+                            raw_aliases = payload["data"].get("aliases", [])
+                            if isinstance(raw_aliases, list):
+                                return mid, [str(a).strip() for a in raw_aliases if str(a).strip()]
+            except Exception:
+                pass
+        return mid, []
+
+    async def _fetch_haruki_all_aliases(self, max_id: int = 850, concurrency: int = 25) -> dict[int, list[str]]:
+        """并发拉取 Haruki 别名库。"""
+        sem = asyncio.Semaphore(concurrency)
+        session = await self._get_session()
+        tasks = [self._fetch_haruki_single_alias(session, mid, sem) for mid in range(1, max_id + 1)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        haruki_map: dict[int, list[str]] = {}
+        for item in results:
+            if isinstance(item, tuple) and len(item) == 2:
+                mid, aliases = item
+                if aliases:
+                    haruki_map[mid] = aliases
+        return haruki_map
+
+    @staticmethod
+    def _merge_aliases(moe_data: dict, haruki_map: dict[int, list[str]]) -> dict:
+        """将 Moesekai 别名与 Haruki 别名无损合并，大小写不敏感去重并保持原有顺序。"""
+        moe_musics = moe_data.get("musics", []) if isinstance(moe_data, dict) else []
+        title_by_id: dict[int, str] = {}
+        moe_map: dict[int, list[str]] = {}
+        for entry in moe_musics:
+            mid = entry.get("music_id")
+            if isinstance(mid, int):
+                title = entry.get("title", "")
+                if title:
+                    title_by_id[mid] = title
+                moe_map[mid] = [str(a).strip() for a in entry.get("aliases", []) if str(a).strip()]
+
+        all_mids = set(moe_map.keys()) | set(haruki_map.keys())
+        merged_musics = []
+        for mid in sorted(all_mids):
+            seen_keys = set()
+            merged_list = []
+            for a in moe_map.get(mid, []) + haruki_map.get(mid, []):
+                if not a:
+                    continue
+                cleaned = str(a).strip()
+                if not cleaned:
+                    continue
+                k = cleaned.lower()
+                if k not in seen_keys:
+                    seen_keys.add(k)
+                    merged_list.append(cleaned)
+            merged_musics.append({
+                "music_id": mid,
+                "title": title_by_id.get(mid, f"Song_{mid}"),
+                "aliases": merged_list,
+            })
+        return {
+            "generated_at": int(time.time()),
+            "source": "moesekai + haruki",
+            "musics": merged_musics,
+        }
+
     async def _update_extras(self, keys: list[str]):
         """逐个更新补充数据；单个失败不影响其余，全部失败才抛异常。"""
         errors = []
         for key in keys:
             try:
-                raw = await self._fetch_url(_EXTRA_SOURCES[key])
-                self._store_extra(key, json.loads(raw.decode("utf-8")), update_meta=True)
+                if key == "alias":
+                    # 1. 先拉取 Moesekai 别名库
+                    moe_raw = await self._fetch_url(_EXTRA_SOURCES["alias"])
+                    moe_json = json.loads(moe_raw.decode("utf-8"))
+                    # 2. 尝试拉取 Haruki 别名库并合并（失败则静默回退使用 Moesekai）
+                    try:
+                        haruki_map = await self._fetch_haruki_all_aliases()
+                        if haruki_map:
+                            merged_data = self._merge_aliases(moe_json, haruki_map)
+                            self._store_extra("alias", merged_data, update_meta=True)
+                            logger.info(
+                                f"[PJSK Wordle] 别名库已从 Moesekai 与 Haruki 合并更新: "
+                                f"{len(merged_data.get('musics', []))} 首"
+                            )
+                        else:
+                            self._store_extra("alias", moe_json, update_meta=True)
+                    except Exception as e:
+                        logger.warning(f"[PJSK Wordle] 拉取 Haruki 别名失败，仅使用 Moesekai 别名: {e}")
+                        self._store_extra("alias", moe_json, update_meta=True)
+                else:
+                    raw = await self._fetch_url(_EXTRA_SOURCES[key])
+                    self._store_extra(key, json.loads(raw.decode("utf-8")), update_meta=True)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
