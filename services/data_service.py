@@ -586,8 +586,9 @@ class DataService:
                 elif 21 <= cid <= 26:
                     has_virtual = True
 
-        # 跨团合唱不能按角色数组顺序归入第一个团体。
-        if len(unit_keys) > 1 or (unit_keys and has_virtual):
+        # 只有多个不同实体团体共同演唱时才归为多人 vocal；
+        # 单一团体与虚拟歌手混合仍归该实体团体。
+        if len(unit_keys) > 1:
             return "多人vocal"
         if unit_keys:
             return _unit_display(next(iter(unit_keys)), server)
