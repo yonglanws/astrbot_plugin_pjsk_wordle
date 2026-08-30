@@ -96,6 +96,12 @@
     "default": [],
     "hint": "可使用 更新wordle题库 等管理指令的用户 QQ 号。"
   },
+  "reward_valid_time": {
+    "description": "奖励有效时间（秒，0 为禁用）",
+    "type": "int",
+    "default": 3,
+    "hint": "首位玩家答对后，在此时间（秒）内答对的其它玩家也能获得分数。设为 0 则禁用（仅首位答对者得分）。"
+  },
   "quick_entries": {
     "description": "结算快捷入口列表（仅QQ官方机器人）",
     "type": "list",

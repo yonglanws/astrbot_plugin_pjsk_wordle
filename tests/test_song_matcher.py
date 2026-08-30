@@ -235,3 +235,10 @@ class TestWordleCategoryDerivation:
         # 重复猜测检查
         assert game.is_already_guessed(SAMPLE_SONGS[6]["id"]) is True
         assert game.is_already_guessed(SAMPLE_SONGS[0]["id"]) is False
+
+    def test_wordle_reward_valid_time_score_calculation(self):
+        from services.game_service import score_for_guess_count
+        assert score_for_guess_count(1, 12) == 4
+        assert score_for_guess_count(4, 12) == 3
+        assert score_for_guess_count(8, 12) == 2
+        assert score_for_guess_count(12, 12) == 1

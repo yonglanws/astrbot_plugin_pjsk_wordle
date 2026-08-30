@@ -591,6 +591,9 @@ class PjskWordlePlugin(Star):
             "event": event,
             "last_activity": time.time(),
             "idle_task": None,
+            "winners_list": [],
+            "first_win_time": 0.0,
+            "reward_task": None,
         }
         logger.info(
             f"[PJSK Wordle] 新开局 session={session_id} server={server} 答案: {answer['title']}"
@@ -686,6 +689,27 @@ class PjskWordlePlugin(Star):
 
         # 身份解析期间超时看护可能已结束本局，避免吞掉制胜一击
         if game.is_finished():
+            # 若在奖励有效时间内且猜中了答案，记录额外获胜者
+            first_win_time = sess.get("first_win_time", 0.0)
+            reward_valid_time = max(0, int(self.config.get("reward_valid_time", 3)))
+            if (
+                game.won
+                and first_win_time > 0
+                and reward_valid_time > 0
+                and time.time() - first_win_time <= reward_valid_time
+                and song["id"] == game.answer["id"]
+            ):
+                winners = sess.setdefault("winners_list", [])
+                if not any(w["user_id"] == player_id for w in winners):
+                    score = score_for_guess_count(game.guess_count, game.max_guesses)
+                    winners.append(
+                        {
+                            "user_id": player_id,
+                            "user_name": player_name,
+                            "score": score,
+                            "is_first": False,
+                        }
+                    )
             return
 
         # 检查是否重复猜测过
@@ -697,6 +721,22 @@ class PjskWordlePlugin(Star):
             return
 
         game.guess(song, player_id, player_name)
+
+        # 首位猜中者处理奖励有效时间
+        reward_valid_time = max(0, int(self.config.get("reward_valid_time", 3)))
+        if game.won and game.is_finished():
+            score = score_for_guess_count(game.guess_count, game.max_guesses)
+            winners = sess.setdefault("winners_list", [])
+            if not winners:
+                winners.append(
+                    {
+                        "user_id": player_id,
+                        "user_name": player_name,
+                        "score": score,
+                        "is_first": True,
+                    }
+                )
+            sess["first_win_time"] = time.time()
 
         # 未猜中结束（fail 满次）时，棋盘上揭晓正确答案参数行（全绿）
         # 满次时若已满 max_rows，render_board 会自动单开第 max_rows+1 行绘制该答案行
@@ -720,7 +760,17 @@ class PjskWordlePlugin(Star):
             logger.error(f"[PJSK Wordle] 发送棋盘失败: {e}", exc_info=True)
 
         if game.is_finished():
-            await self._finish_game(event, session_id, reason=game.end_reason)
+            if game.won and reward_valid_time > 0:
+                async def _delayed_finish():
+                    await asyncio.sleep(reward_valid_time)
+                    if session_id in self.games and self.games[session_id].get("game") is game:
+                        await self._finish_game(event, session_id, reason="win")
+
+                task = asyncio.create_task(_delayed_finish())
+                sess["reward_task"] = task
+                self._track_task(task)
+            else:
+                await self._finish_game(event, session_id, reason=game.end_reason)
 
     async def _finish_game(self, event: AstrMessageEvent, session_id: str, reason: str):
         """结束一局：结算积分、发送结果文本、清理状态并处理自动续局。
@@ -742,21 +792,40 @@ class PjskWordlePlugin(Star):
 
         lines = ["Wordle 结束"]
         if game.won and reason == "win":
-            score = score_for_guess_count(game.guess_count, game.max_guesses)
-            lines.append(f"你在第 {game.guess_count} / {game.max_guesses} 次猜对了，增加{score}分")
-            lines.append(f"正确答案：{answer_display}")
-            try:
-                await self.db_service.record_result(
-                    session_id=session_id,
-                    user_id=game.winner_id or "",
-                    user_name=game.winner_name or "未知",
-                    platform_name=self._identity_platform(game.winner_id),
-                    score=score,
-                    won=True,
-                    guesses=game.guess_count,
-                )
-            except Exception as e:
-                logger.error(f"[PJSK Wordle] 记录战绩失败: {e}", exc_info=True)
+            winners = sess.get("winners_list") or []
+            if not winners and game.winner_id:
+                winners = [
+                    {
+                        "user_id": game.winner_id,
+                        "user_name": game.winner_name or "未知",
+                        "score": score_for_guess_count(game.guess_count, game.max_guesses),
+                        "is_first": True,
+                    }
+                ]
+
+            if len(winners) == 1:
+                w = winners[0]
+                lines.append(f"{w['user_name']} 在第 {game.guess_count} / {game.max_guesses} 次猜对了，增加{w['score']}分")
+                lines.append(f"正确答案：{answer_display}")
+            else:
+                names = "、".join(w["user_name"] for w in winners)
+                score = winners[0]["score"] if winners else score_for_guess_count(game.guess_count, game.max_guesses)
+                lines.append(f"🎉 恭喜以下玩家答对！每人获得{score}分！\n{names}")
+                lines.append(f"正确答案：{answer_display}")
+
+            for w in winners:
+                try:
+                    await self.db_service.record_result(
+                        session_id=session_id,
+                        user_id=w["user_id"] or "",
+                        user_name=w["user_name"] or "未知",
+                        platform_name=self._identity_platform(w["user_id"]),
+                        score=w["score"],
+                        won=True,
+                        guesses=game.guess_count,
+                    )
+                except Exception as e:
+                    logger.error(f"[PJSK Wordle] 记录战绩失败 ({w['user_name']}): {e}", exc_info=True)
         elif reason == "quit":
             lines.append("本局已结束（仅退出本局）")
             lines.append(f"正确答案：{answer_display}")
@@ -948,6 +1017,9 @@ class PjskWordlePlugin(Star):
         task = sess.get("idle_task")
         if task and not task.done():
             task.cancel()
+        reward_task = sess.get("reward_task")
+        if reward_task and not reward_task.done():
+            reward_task.cancel()
 
     async def _idle_watcher(self, session_id: str, sess: dict):
         """长时间无猜测自动结束本局。"""
