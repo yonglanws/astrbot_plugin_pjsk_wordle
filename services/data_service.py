@@ -61,7 +61,7 @@ _GITHUB_REPOS = {
 _GITHUB_BRANCH = "main"
 
 # 派生题库构建规则版本：规则变更时 +1，启动时用本地原始文件离线重建
-DERIVED_RULE = 6  # v6: 新增曲绘资源名字段（jacket）
+DERIVED_RULE = 7  # v7: 跨团 vocal 分类为“多人vocal”
 
 _EXTRA_SOURCES = {
     "translation": "https://translation.exmeaning.com/files/translation/music.json",
@@ -588,7 +588,7 @@ class DataService:
 
         # 跨团合唱不能按角色数组顺序归入第一个团体。
         if len(unit_keys) > 1 or (unit_keys and has_virtual):
-            return "多人合唱"
+            return "多人vocal"
         if unit_keys:
             return _unit_display(next(iter(unit_keys)), server)
 

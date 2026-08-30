@@ -763,7 +763,10 @@ class PjskWordlePlugin(Star):
             if game.won and reward_valid_time > 0:
                 async def _delayed_finish():
                     await asyncio.sleep(reward_valid_time)
-                    if session_id in self.games and self.games[session_id].get("game") is game:
+                    active_session = self.games.get(session_id)
+                    if active_session and active_session.get("game") is game:
+                        # 从会话状态解绑自身，避免结算清理把当前协程取消。
+                        active_session["reward_task"] = None
                         await self._finish_game(event, session_id, reason="win")
 
                 task = asyncio.create_task(_delayed_finish())
@@ -1018,7 +1021,7 @@ class PjskWordlePlugin(Star):
         if task and not task.done():
             task.cancel()
         reward_task = sess.get("reward_task")
-        if reward_task and not reward_task.done():
+        if reward_task and reward_task is not asyncio.current_task() and not reward_task.done():
             reward_task.cancel()
 
     async def _idle_watcher(self, session_id: str, sess: dict):
