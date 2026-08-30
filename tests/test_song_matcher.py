@@ -6,6 +6,7 @@ PLUGIN_DIR = Path(__file__).parents[1]
 sys.path.insert(0, str(PLUGIN_DIR))
 
 from services.game_service import SongMatcher, WordleGame
+from services.data_service import SERVER_JP, DataService
 
 
 # 模拟典型的 PJSK 歌曲题库
@@ -189,7 +190,38 @@ class TestSongMatcher:
         assert res2["id"] == 2
 
 
-class TestWordleGameDuplicateGuess:
+class TestWordleCategoryDerivation:
+    def test_single_unit_sekai_vocal_uses_its_unit(self):
+        category = DataService._derive_category(
+            [{"musicVocalType": "sekai", "characters": [{"characterId": 1}, {"characterId": 2}]}],
+            SERVER_JP,
+            newly_written=False,
+        )
+        assert category == "Leo/need"
+
+    def test_cross_unit_sekai_vocal_is_not_misclassified_as_first_unit(self):
+        category = DataService._derive_category(
+            [{"musicVocalType": "sekai", "characters": [{"characterId": 1}, {"characterId": 5}, {"characterId": 13}]}],
+            SERVER_JP,
+            newly_written=False,
+        )
+        assert category == "多人合唱"
+
+    def test_cross_unit_vocal_with_virtual_singer_is_multi_unit(self):
+        category = DataService._derive_category(
+            [{"musicVocalType": "sekai", "characters": [{"characterId": 1}, {"characterId": 17}, {"characterId": 21}]}],
+            SERVER_JP,
+            newly_written=False,
+        )
+        assert category == "多人合唱"
+
+    def test_cover_without_sekai_version_remains_virtual_singer(self):
+        category = DataService._derive_category(
+            [{"musicVocalType": "original_song", "characters": [{"characterId": 1}, {"characterId": 21}]}],
+            SERVER_JP,
+            newly_written=False,
+        )
+        assert category == "虚拟歌手"
     def test_duplicate_guess_not_counted(self):
         answer = SAMPLE_SONGS[0]  # Tell Your World
         game = WordleGame(answer, server="jp", max_guesses=8)

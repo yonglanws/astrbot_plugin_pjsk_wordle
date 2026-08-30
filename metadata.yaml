@@ -1,7 +1,7 @@
 name: astrbot_plugin_pjsk_wordle # 这是你的插件的唯一识别名。
 display_name: PJSK Wordle
 desc: PJSK 音乐游戏猜曲 Wordle：根据曲名/上线时间/分类/作者/BPM/MASTER/APPEND 的属性反馈锁定目标曲目，支持日服/国服题库切换 # 插件简短描述
-version: v1.0.2 # 插件版本号。格式：v1.1.1 或者 v1.1
+version: v1.0.3 # 插件版本号。格式：v1.1.1 或者 v1.1
 author: 慵懒午睡 # 作者
 repo: https://github.com/yonglanws/astrbot_plugin_pjsk_wordle # 插件的仓库地址
 support_platforms:                         # （可选）支持的平台适配器列表

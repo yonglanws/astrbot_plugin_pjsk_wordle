@@ -538,7 +538,6 @@ class DataService:
         return result
 
     @staticmethod
-    @staticmethod
     def _clean_text(value: str | None) -> str | None:
         """清洗数据文本：去首尾空白，内部换行/制表符折叠为空格。
 
@@ -573,29 +572,34 @@ class DataService:
             search_pool = [
                 v for v in vocal_entries if v.get("musicVocalType") == "original_song"
             ] or vocal_entries
-        unit_key = None
+        unit_keys: set[str] = set()
         has_virtual = False
-        for v in sorted(search_pool, key=lambda x: x.get("id") or 0):
-            for c in v.get("characters", []):
-                cid = c.get("characterId")
+        for vocal in sorted(search_pool, key=lambda x: x.get("id") or 0):
+            for character in vocal.get("characters", []):
+                cid = character.get("characterId")
                 if cid is None:
                     continue
                 if 1 <= cid <= 20:
-                    if unit_key is None:
-                        unit_key = _UNIT_BY_CHAR.get(cid)
+                    unit_key = _UNIT_BY_CHAR.get(cid)
+                    if unit_key:
+                        unit_keys.add(unit_key)
                 elif 21 <= cid <= 26:
                     has_virtual = True
-        if unit_key is None:
-            # 虚拟歌手判定扫描全部 vocals（sekai 版也可能只是 VS+单元，不含冲突信息）
-            for v in vocal_entries:
-                for c in v.get("characters", []):
-                    if 21 <= (c.get("characterId") or 0) <= 26:
-                        has_virtual = True
-            if has_virtual:
-                unit_key = "virtual_singer"
-            else:
-                return _UNKNOWN_CATEGORY
-        return _unit_display(unit_key, server)
+
+        # 跨团合唱不能按角色数组顺序归入第一个团体。
+        if len(unit_keys) > 1 or (unit_keys and has_virtual):
+            return "多人合唱"
+        if unit_keys:
+            return _unit_display(next(iter(unit_keys)), server)
+
+        # 无 sekai 版本的翻唱曲，其 VS vocal 角色不代表所属团体。
+        if not sekai_vocals:
+            for vocal in vocal_entries:
+                if any(21 <= (c.get("characterId") or 0) <= 26 for c in vocal.get("characters", [])):
+                    has_virtual = True
+        if has_virtual:
+            return _unit_display("virtual_singer", server)
+        return _UNKNOWN_CATEGORY
 
     # ---------- 本地加载 ----------
 

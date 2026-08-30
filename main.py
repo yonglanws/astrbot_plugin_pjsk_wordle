@@ -40,7 +40,7 @@ from .services.render_service import RenderService
 PLUGIN_NAME = "pjsk_wordle"
 PLUGIN_AUTHOR = "慵懒午睡"
 PLUGIN_DESCRIPTION = "PJSK 音乐游戏猜曲 Wordle：限定次数内根据曲名/上线时间/书下曲/分类/作者/BPM/MASTER/APPEND 反馈锁定目标曲目"
-PLUGIN_VERSION = "1.0.2"
+PLUGIN_VERSION = "1.0.3"
 PLUGIN_REPO_URL = "https://github.com/yonglanws/astrbot_plugin_pjsk_wordle"
 
 SERVER_LABELS = {SERVER_JP: "日服", SERVER_SC: "国服"}
