@@ -44,12 +44,16 @@ _SERVER_FILES = {
         ("master/musicDifficulties.json", "musicDifficulties.json"),
         ("master/musicVocals.json", "musicVocals.json"),
         ("master/musicArtists.json", "musicArtists.json"),
+        ("master/events.json", "events.json"),
+        ("master/eventMusics.json", "eventMusics.json"),
         ("versions/current_version.json", "current_version.json"),
     ],
     SERVER_SC: [
         ("master/musics.json", "musics.json"),
         ("master/musicDifficulties.json", "musicDifficulties.json"),
         ("master/musicVocals.json", "musicVocals.json"),
+        ("master/events.json", "events.json"),
+        ("master/eventMusics.json", "eventMusics.json"),
         ("versions/current_version.json", "current_version.json"),
     ],
 }
@@ -61,7 +65,7 @@ _GITHUB_REPOS = {
 _GITHUB_BRANCH = "main"
 
 # 派生题库构建规则版本：规则变更时 +1，启动时用本地原始文件离线重建
-DERIVED_RULE = 7  # v7: 跨团 vocal 分类为“多人vocal”
+DERIVED_RULE = 8  # v8: 支持 WorldLink 专属分类识别与跨团合唱精确分类
 
 _EXTRA_SOURCES = {
     "translation": "https://translation.exmeaning.com/files/translation/music.json",
@@ -454,6 +458,12 @@ class DataService:
         diffs = parsed.get("musicDifficulties.json", [])
         vocals = parsed.get("musicVocals.json", [])
         artists = parsed.get("musicArtists.json", [])
+        events = parsed.get("events.json", [])
+        event_musics = parsed.get("eventMusics.json", [])
+
+        # 解析 WorldLink（world_bloom 活动类型）关联的歌曲 ID 集合
+        wl_event_ids = {e.get("id") for e in events if e.get("eventType") == "world_bloom" and e.get("id") is not None}
+        wl_music_ids = {em.get("musicId") for em in event_musics if em.get("eventId") in wl_event_ids and em.get("musicId") is not None}
 
         master_level: dict[int, int] = {}
         append_ids = set()
@@ -523,6 +533,7 @@ class DataService:
                         vocals_by_music.get(mid, []),
                         server,
                         bool(m.get("isNewlyWrittenMusic")),
+                        is_world_link=(mid in wl_music_ids),
                     ),
                     "artist": artist,
                     "date": date_str,
@@ -550,18 +561,25 @@ class DataService:
         return " ".join(str(value).split())
 
     @staticmethod
-    def _derive_category(vocal_entries: list[dict], server: str, newly_written: bool) -> str:
-        """根据 vocals 中出现的角色推导单元分类。
+    def _derive_category(
+        vocal_entries: list[dict],
+        server: str,
+        newly_written: bool,
+        is_world_link: bool = False,
+    ) -> str:
+        """根据 vocals 中出现的角色以及活动类型推导单元分类。
 
         规则：
-        1. 有 セカイver.（musicVocalType == "sekai"）→ 以 sekai 版登场角色为准
-           （例：命ばっかり 的 VS ver 登场 Leo/need 角色，但 sekai ver 是 25時 → 25時）；
-        2. 无セカイver 且为游戏原创曲（isNewlyWrittenMusic）→ 以 original_song
-           登场角色判定单元（单元原创曲均属该单元）；
-        3. 无セカイver 的翻唱曲 → 一律归虚拟歌手。翻唱的 バーチャル・シンガーver.
-           登场角色只是关联角色，不代表所属团体
-           （例：パメラ 的 VS ver 登场穂波，但游戏内属于 VirtualSinger）。
+        1. 若歌曲对应 WorldLink（world_bloom 活动类型）活动曲 → 一律归类为 "WorldLink"；
+        2. 有 セカイver.（musicVocalType == "sekai"）→ 以 sekai 版登场角色为准
+           - 若登场角色仅包含单一实体团体（或加虚拟歌手）→ 归类为该具体团体；
+           - 若包含多个不同实体团体角色 → 归类为 "多人vocal"；
+        3. 无セカイver 且为游戏原创曲（isNewlyWrittenMusic）→ 以 original_song 登场角色判定单元；
+        4. 无セカイver 的翻唱曲 → 一律归虚拟歌手。
         """
+        if is_world_link:
+            return "WorldLink"
+
         sekai_vocals = [v for v in vocal_entries if v.get("musicVocalType") == "sekai"]
         if not sekai_vocals and not newly_written:
             # 无セカイver 的翻唱曲 → 虚拟歌手
