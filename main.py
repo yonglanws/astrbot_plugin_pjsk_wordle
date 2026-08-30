@@ -688,6 +688,14 @@ class PjskWordlePlugin(Star):
         if game.is_finished():
             return
 
+        # 检查是否重复猜测过
+        if game.is_already_guessed(song["id"]):
+            song_display = self._answer_display(song)
+            await event.send(
+                event.plain_result(f"「{song_display}」在本局中已经猜测过了哦，请换一首试试吧~")
+            )
+            return
+
         game.guess(song, player_id, player_name)
 
         # 未猜中结束（fail 满次）时，棋盘上揭晓正确答案参数行（全绿）

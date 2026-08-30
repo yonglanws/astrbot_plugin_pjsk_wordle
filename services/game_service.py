@@ -79,56 +79,68 @@ def _dice(a: frozenset, b: frozenset) -> float:
     return 2 * len(a & b) / (len(a) + len(b))
 
 
-def _edit_distance_at_most(a: str, b: str, max_dist: int) -> int | None:
-    """计算 a、b 的编辑距离（插入/删除/替换，每个字符计 1）。
-
-    超过 max_dist 时提前剪枝返回 None；差值本身已超限时直接短路。
-    """
-    if abs(len(a) - len(b)) > max_dist:
-        return None
+def _edit_distance(a: str, b: str) -> int:
+    """计算 a、b 的标准 Levenshtein 编辑距离。"""
     if a == b:
         return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
     if len(a) > len(b):
         a, b = b, a
     prev = list(range(len(a) + 1))
     for j, cb in enumerate(b, 1):
         cur = [j]
-        row_min = j
         for i, ca in enumerate(a, 1):
             cost = 0 if ca == cb else 1
             value = min(prev[i - 1] + cost, prev[i] + 1, cur[i - 1] + 1)
             cur.append(value)
-            if value < row_min:
-                row_min = value
-        if row_min > max_dist:
-            return None
         prev = cur
-    distance = prev[-1]
-    return distance if distance <= max_dist else None
+    return prev[-1]
+
+
+def _similarity_ratio(a: str, b: str) -> float:
+    """综合计算 a 与 b 的归一化相似度 (0.0 ~ 1.0)。
+
+    结合：
+    1. 编辑距离相似度 (Levenshtein ratio)
+    2. 字符二元组重合度 (Bigram Dice)
+    3. 子串/前缀加成 (Substring/Prefix bonus)
+    """
+    if a == b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+
+    max_len = max(len(a), len(b))
+    dist = _edit_distance(a, b)
+    lev_ratio = 1.0 - (dist / max_len)
+
+    dice_ratio = _dice(_bigrams(a), _bigrams(b))
+
+    base_score = max(lev_ratio, dice_ratio * 0.9)
+
+    # 包含/前缀关系加成
+    if a in b or b in a:
+        coverage = min(len(a), len(b)) / max(len(a), len(b))
+        if b.startswith(a) or a.startswith(b):
+            base_score = max(base_score, 0.75 + 0.24 * coverage)
+        else:
+            base_score = max(base_score, 0.70 + 0.20 * coverage)
+
+    return min(1.0, max(0.0, base_score))
 
 
 class SongMatcher:
-    """曲名/别名 -> 歌曲的模糊匹配器。
+    """曲名/别名 -> 歌曲的高精度模糊匹配器。
 
-    匹配按优先级依次尝试：
-    1. 精确匹配：规范化（小写/全半角/去空白与常见标点）后完全一致；
-    2. 编辑距离容错：长度 ≥4 允许 1 个字符差错（漏字/多字/错字均可，
-       如把"25时的情热"打成"25时的情熟"或少打成"25时的情"），长度 ≥8 放宽到 2 个；
-       多个候选时按 编辑距离小 > 曲名精确一致 > id 小 排序；
-    3. 包含匹配：输入与某个别名互为包含（如只记得半个名字），
-       仅当唯一命中一首歌时才接受，存在歧义则不匹配；
-    4. 兜底相似匹配（always_match=True 时启用）：对全库做字符二元组
-       重合度（Dice）+ 包含加成 + 精确编辑距离复核的综合评分，返回得分
-       最高的歌曲——保证 @机器人 的任何回答都至少匹配出一首。
-    过短的输入（<4 字符）不参与第 2/3 层，但仍会走兜底匹配。
+    多阶段匹配：
+    1. 精确匹配：完全一致直接命中；
+    2. 高置信度匹配：编辑距离 <= 2 且相似度 >= 0.75（包含前缀命中）；
+    3. 综合多候选相似度打分：全面搜索日文原名、中文名、别名，选取综合相似度最高的歌曲；
+    4. 兜底匹配：当 always_match=True 时，返回全库相对最高分的歌曲。
     """
-
-    FUZZY_MIN_LENGTH = 4  # 编辑距离/包含层生效的最短输入长度
-    FUZZY_MAX_DISTANCE = 1  # 默认容错字符数
-    FUZZY_MAX_DISTANCE_LONG = 2  # 长输入的容错字符数
-    FUZZY_LONG_LENGTH = 8  # 触发放大容错的输入长度
-    CONTAIN_SCORE = 0.85  # 包含关系的相似度加成
-    REFINE_TOP_N = 30  # 兜底层精修的候选数量
 
     def __init__(self, songs: list[dict], always_match: bool = True):
         self.songs = songs
@@ -144,9 +156,8 @@ class SongMatcher:
                     continue
                 self._index.setdefault(key, []).append(song["id"])
         self._by_id = {song["id"]: song for song in songs}
-        # 预计算每个键的字符二元组集合（兜底评分用）
-        self._entries: list[tuple[str, tuple[int, ...], frozenset]] = [
-            (key, tuple(ids), _bigrams(key)) for key, ids in self._index.items()
+        self._entries: list[tuple[str, tuple[int, ...]]] = [
+            (key, tuple(ids)) for key, ids in self._index.items()
         ]
 
     def _select(self, song_ids: set[int], query_key: str) -> dict:
@@ -162,97 +173,38 @@ class SongMatcher:
 
         return self._by_id[min(song_ids, key=rank)]
 
-    def _fuzzy_max_distance(self, key: str) -> int:
-        if len(key) >= self.FUZZY_LONG_LENGTH:
-            return self.FUZZY_MAX_DISTANCE_LONG
-        return self.FUZZY_MAX_DISTANCE
-
-    def _fuzzy_find(self, key: str) -> dict | None:
-        max_dist = self._fuzzy_max_distance(key)
-
-        # 编辑距离容错：漏字 / 多字 / 错字
-        best_distance = max_dist + 1
-        best_ids: set[int] = set()
-        for indexed_key, id_list in self._index.items():
-            if abs(len(indexed_key) - len(key)) > max_dist:
-                continue
-            distance = _edit_distance_at_most(indexed_key, key, max_dist)
-            if distance is None:
-                continue
-            if distance < best_distance:
-                best_distance = distance
-                best_ids = set(id_list)
-            elif distance == best_distance:
-                best_ids.update(id_list)
-        if best_ids:
-            return self._select(best_ids, key)
-
-        # 包含匹配：只记得半个名字；仅在唯一命中一首歌时接受
-        hit_songs: set[int] = set()
-        for indexed_key, id_list in self._index.items():
-            if len(indexed_key) < self.FUZZY_MIN_LENGTH:
-                continue
-            if indexed_key in key or key in indexed_key:
-                hit_songs.update(id_list)
-                if len(hit_songs) > 1:
-                    return None if not self.always_match else self._best_effort_find(key)
-        if len(hit_songs) == 1:
-            return self._by_id[next(iter(hit_songs))]
-        if self.always_match:
-            return self._best_effort_find(key)
-        return None
-
-    def _best_effort_find(self, key: str) -> dict:
-        """兜底相似匹配：全库综合评分，返回得分最高的歌曲（保证有结果）。
-
-        评分 = max(字符二元组 Dice 重合度, 包含加成, 归一化编辑距离)，
-        编辑距离仅对 Dice 最高的前 REFINE_TOP_N 个候选做精修以控制耗时。
-        同分时按 曲名精确一致 > id 小 决出。
-        """
-        query_bigrams = _bigrams(key)
-        scored: list[tuple[float, str, tuple[int, ...]]] = []
-        for indexed_key, ids, key_bigrams in self._entries:
-            score = _dice(query_bigrams, key_bigrams)
-            if indexed_key in key or key in indexed_key:
-                ratio = min(len(indexed_key), len(key)) / max(len(indexed_key), len(key))
-                score = max(score, self.CONTAIN_SCORE + 0.1 * ratio)
-            scored.append((score, indexed_key, ids))
-        scored.sort(key=lambda t: -t[0])
-
-        refined: list[tuple[float, str, tuple[int, ...]]] = []
-        for score, indexed_key, ids in scored[: self.REFINE_TOP_N]:
-            distance = _edit_distance_at_most(indexed_key, key, max(len(indexed_key), len(key)))
-            if distance is not None:
-                distance_score = 1 - distance / max(len(indexed_key), len(key))
-                score = max(score, distance_score)
-            refined.append((score, indexed_key, ids))
-
-        refined.sort(key=lambda t: -t[0])
-        best_score = refined[0][0]
-        best_ids: set[int] = set()
-        for score, _, ids in refined:
-            if score < best_score:
-                break
-            best_ids.update(ids)
-        return self._select(best_ids, key)
-
     def find(self, query: str) -> dict | None:
         key = normalize_text(query)
         if not key:
-            # 规范化后为空（纯标点/空白）：兜底返回第一首，保证有结果
             if self.always_match and self.songs:
                 return self.songs[0]
             return None
 
+        # 1. 精确匹配
         ids = self._index.get(key)
         if ids:
             return self._select(set(ids), key)
 
-        if len(key) >= self.FUZZY_MIN_LENGTH:
-            return self._fuzzy_find(key)
-        if self.always_match:
-            # 短输入不走编辑距离/包含层，但仍保底返回最接近的一首
-            return self._best_effort_find(key)
+        # 2. 全库多名称相似度综合评分
+        best_score = -1.0
+        best_song_id = None
+
+        for indexed_key, id_tuple in self._entries:
+            score = _similarity_ratio(key, indexed_key)
+            if score > best_score:
+                best_score = score
+                best_song_id = id_tuple[0]
+            elif score == best_score and best_song_id is not None:
+                if id_tuple[0] < best_song_id:
+                    best_song_id = id_tuple[0]
+
+        # 判定置信度门槛
+        if best_score >= 0.60:
+            return self._by_id[best_song_id]
+
+        if self.always_match and best_song_id is not None:
+            return self._by_id[best_song_id]
+
         return None
 
 
@@ -281,6 +233,10 @@ class WordleGame:
 
     def is_finished(self) -> bool:
         return self.finished
+
+    def is_already_guessed(self, song_id: int) -> bool:
+        """检查指定歌曲是否已经在当前对局中被猜测过。"""
+        return song_id in self.guess_ids
 
     def guess(self, song: dict, player_id: str = "", player_name: str = "") -> dict:
         """提交一次猜测，返回本局快照信息。
