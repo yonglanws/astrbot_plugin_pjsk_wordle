@@ -471,10 +471,5 @@ class GameService:
             return None
         return matcher.find(query)
 
-    def guess(
-        self, game: WordleGame, song: dict, player_id: str = "", player_name: str = ""
-    ) -> dict:
-        return game.guess(song, player_id, player_name)
-
     def compare(self, guess: dict, answer: dict) -> list[dict]:
         return compare_songs(guess, answer, self.close_days, self.close_bpm, self.close_master)

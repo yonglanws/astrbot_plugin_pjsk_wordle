@@ -40,7 +40,7 @@ from .services.render_service import RenderService
 PLUGIN_NAME = "pjsk_wordle"
 PLUGIN_AUTHOR = "慵懒午睡"
 PLUGIN_DESCRIPTION = "PJSK 音乐游戏猜曲 Wordle：限定次数内根据曲名/上线时间/书下曲/分类/作者/BPM/MASTER/APPEND 反馈锁定目标曲目"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 PLUGIN_REPO_URL = "https://github.com/yonglanws/astrbot_plugin_pjsk_wordle"
 
 SERVER_LABELS = {SERVER_JP: "日服", SERVER_SC: "国服"}
@@ -158,16 +158,20 @@ class PjskWordlePlugin(Star):
         self.last_game_end: dict[str, float] = {}
         self.server_prefs: dict[str, str] = self._load_server_prefs()
         self._background_tasks = set()
+        self._stopping = False
 
-        self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
-        self._init_task = asyncio.create_task(self._async_init())
+        self._cleanup_task = self._track_task(asyncio.create_task(self._periodic_cleanup()))
+        self._init_task = self._track_task(asyncio.create_task(self._async_init()))
 
     # ---------- 初始化 ----------
 
     async def _async_init(self):
         try:
             await self.db_service.init_db()
-            await self.data_service.start()
+            if not self._stopping:
+                await self.data_service.start()
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"[PJSK Wordle] 初始化失败: {e}", exc_info=True)
 
@@ -180,11 +184,18 @@ class PjskWordlePlugin(Star):
         logger.info("[PJSK Wordle] 匹配器已随题库更新。")
 
     async def terminate(self):
+        self._stopping = True
         for session_id, sess in list(self.games.items()):
             self._cancel_idle_task(sess)
             self.games.pop(session_id, None)
-        for task in list(self._background_tasks):
+        tasks = [task for task in self._background_tasks if task is not asyncio.current_task()]
+        for task in tasks:
             task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
+        self.auto_sessions.clear()
+        self.session_locks.clear()
         await self.data_service.terminate()
         logger.info("[PJSK Wordle] 插件已终止。")
 
@@ -259,14 +270,16 @@ class PjskWordlePlugin(Star):
     async def start_auto_wordle(self, event: AstrMessageEvent):
         """进入自动模式：每局结束后自动开始下一局，发送 退出自动模式 停止。"""
         session_id = _get_normalized_session_id(event)
+        async with self._get_session_lock(session_id):
+            started = await self._start_round(event, session_id, auto=True)
+        if not started:
+            return
         self.auto_sessions[session_id] = True
         await event.send(
             event.plain_result(
                 "已开启自动 Wordle 模式！每局结束后将自动开始下一局，发送“退出自动模式”可停止。"
             )
         )
-        async with self._get_session_lock(session_id):
-            await self._start_round(event, session_id, auto=True)
 
     # ---------- 指令：切换题库服务器 ----------
 
@@ -290,7 +303,7 @@ class PjskWordlePlugin(Star):
             await event.send(event.plain_result(f"当前题库已经是{SERVER_LABELS[server]}题库了。"))
             return
         self.server_prefs[session_id] = server
-        self._save_server_prefs()
+        await asyncio.to_thread(self._save_server_prefs)
         count = self.data_service.get_song_count(server)
         version = self.data_service.get_version(server)
         await event.send(
@@ -349,7 +362,7 @@ class PjskWordlePlugin(Star):
                     "is_unbound_official": bool(row.get("is_unbound_official")),
                 }
             )
-        img_path = self.render_service.render_ranking(render_rows, title=title)
+        img_path = await asyncio.to_thread(self.render_service.render_ranking, render_rows, title)
         if img_path:
             await event.send(event.image_result(img_path))
         else:
@@ -450,7 +463,7 @@ class PjskWordlePlugin(Star):
     @filter.command("wordle帮助", alias={"wordle玩法"})
     async def show_help(self, event: AstrMessageEvent):
         """显示 Wordle 玩法帮助。"""
-        img_path = self.render_service.render_help()
+        img_path = await asyncio.to_thread(self.render_service.render_help)
         if img_path:
             await event.send(event.image_result(img_path))
         else:
@@ -540,22 +553,22 @@ class PjskWordlePlugin(Star):
 
     # ---------- 游戏流程 ----------
 
-    async def _start_round(self, event: AstrMessageEvent, session_id: str, auto: bool = False):
+    async def _start_round(self, event: AstrMessageEvent, session_id: str, auto: bool = False) -> bool:
         """开始一局（调用方需持有会话锁）。"""
         if not self._is_group_allowed(event):
             reject_msg = str(self.config.get("whitelist_reject_message", "") or "").strip()
             if reject_msg:
                 await event.send(event.plain_result(reject_msg))
-            return
+            return False
 
         if session_id in self.games:
             await event.send(event.plain_result("已经有一局 Wordle 在进行中了，先完成它吧。"))
-            return
+            return False
 
         cooldown = float(self.config.get("game_cooldown_seconds", 3))
         if not auto and time.time() - self.last_game_end.get(session_id, 0) < cooldown:
             await event.send(event.plain_result("休息一下，马上就可以开始下一局了……"))
-            return
+            return False
 
         server = self._server_for_session(session_id)
         songs = self.data_service.get_songs(server)
@@ -563,10 +576,14 @@ class PjskWordlePlugin(Star):
             await event.send(
                 event.plain_result("题库还没有加载完成（首次启动需要联网下载），请稍后再试。")
             )
-            return
+            return False
 
         answer = random.choice(songs)
-        max_guesses = int(self.config.get("max_guesses", MAX_GUESSES))
+        try:
+            requested_max_guesses = int(self.config.get("max_guesses", MAX_GUESSES))
+        except (TypeError, ValueError):
+            requested_max_guesses = MAX_GUESSES
+        max_guesses = max(1, min(requested_max_guesses, 20))
         game = WordleGame(answer, server, max_guesses=max_guesses)
         self.games[session_id] = {
             "game": game,
@@ -580,8 +597,8 @@ class PjskWordlePlugin(Star):
         )
 
         version = self.data_service.get_version(server)
-        board_path = self.render_service.render_board(
-            [], max_guesses, SERVER_BADGES[server], version
+        board_path = await asyncio.to_thread(
+            self.render_service.render_board, [], max_guesses, SERVER_BADGES[server], version
         )
         is_official = self._get_platform_name(event) == OFFICIAL_PLATFORM_NAME
         in_auto_mode = bool(self.auto_sessions.get(session_id))
@@ -629,9 +646,10 @@ class PjskWordlePlugin(Star):
         except Exception as e:
             logger.error(f"[PJSK Wordle] 发送开局消息失败: {e}", exc_info=True)
             self.games.pop(session_id, None)
-            return
+            return False
 
         self._start_idle_watcher(session_id)
+        return True
 
     async def _process_guess(self, event: AstrMessageEvent, session_id: str, sess: dict, text: str):
         """处理一次可能的猜测。"""
@@ -679,12 +697,13 @@ class PjskWordlePlugin(Star):
             answer_row = self.game_service.compare(game.answer, game.answer)
 
         version = self.data_service.get_version(server)
-        board_path = self.render_service.render_board(
+        board_path = await asyncio.to_thread(
+            self.render_service.render_board,
             game.rows,
             game.max_guesses,
             SERVER_BADGES[server],
             version,
-            answer_row=answer_row,
+            answer_row,
         )
         try:
             if board_path:
@@ -752,12 +771,13 @@ class PjskWordlePlugin(Star):
             try:
                 answer_row = self.game_service.compare(game.answer, game.answer)
                 version = self.data_service.get_version(server)
-                board_path = self.render_service.render_board(
+                board_path = await asyncio.to_thread(
+                    self.render_service.render_board,
                     game.rows,
                     game.max_guesses,
                     SERVER_BADGES[server],
                     version,
-                    answer_row=answer_row,
+                    answer_row,
                 )
                 if board_path:
                     await event.send(event.chain_result([Comp.Image(file=board_path)]))

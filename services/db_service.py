@@ -219,73 +219,77 @@ class DBService:
         """记录一局结束后的玩家战绩（仅获胜者会被调用，won=True）。"""
         async with self._get_conn() as conn:
             conn.row_factory = aiosqlite.Row
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "SELECT * FROM user_stats WHERE user_id = ? AND platform_name = ?",
-                    (user_id, platform_name),
-                )
-                row = await cursor.fetchone()
-                if row is None:
+            try:
+                await conn.execute("BEGIN IMMEDIATE")
+                async with conn.cursor() as cursor:
                     await cursor.execute(
-                        "INSERT INTO user_stats (user_id, user_name, platform_name) VALUES (?, ?, ?)",
-                        (user_id, user_name, platform_name),
+                        "SELECT * FROM user_stats WHERE user_id = ? AND platform_name = ?",
+                        (user_id, platform_name),
                     )
-                    row = {
-                        "score": 0,
-                        "games": 0,
-                        "wins": 0,
-                        "sum_guesses": 0,
-                        "best_guesses": 0,
-                        "group_scores": "{}",
+                    row = await cursor.fetchone()
+                    if row is None:
+                        await cursor.execute(
+                            "INSERT INTO user_stats (user_id, user_name, platform_name) VALUES (?, ?, ?)",
+                            (user_id, user_name, platform_name),
+                        )
+                        row = {
+                            "score": 0,
+                            "games": 0,
+                            "wins": 0,
+                            "sum_guesses": 0,
+                            "best_guesses": 0,
+                            "group_scores": "{}",
+                        }
+
+                    def _int(key):
+                        try:
+                            return int(row[key] or 0)
+                        except (KeyError, TypeError, ValueError):
+                            return 0
+
+                    safe_score = max(0, int(score or 0))
+                    games = _int("games") + 1
+                    wins = _int("wins") + (1 if won else 0)
+                    sum_guesses = _int("sum_guesses") + (int(guesses) if won else 0)
+                    best = _int("best_guesses")
+                    if won and (best == 0 or 0 < int(guesses) < best):
+                        best = int(guesses)
+
+                    try:
+                        groups = json.loads(row["group_scores"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        groups = {}
+                    stat = groups.get(session_id, {})
+                    if not isinstance(stat, dict):
+                        stat = {}
+                    groups[session_id] = {
+                        "score": int(stat.get("score", 0) or 0) + safe_score,
+                        "games": int(stat.get("games", 0) or 0) + 1,
+                        "wins": int(stat.get("wins", 0) or 0) + (1 if won else 0),
                     }
 
-                def _int(key):
-                    try:
-                        return int(row[key] or 0)
-                    except (KeyError, TypeError, ValueError):
-                        return 0
-
-                score = max(0, int(score or 0))
-                games = _int("games") + 1
-                wins = _int("wins") + (1 if won else 0)
-                sum_guesses = _int("sum_guesses") + (int(guesses) if won else 0)
-                best = _int("best_guesses")
-                if won and (best == 0 or 0 < int(guesses) < best):
-                    best = int(guesses)
-
-                groups = {}
-                try:
-                    groups = json.loads(row["group_scores"] or "{}")
-                except (TypeError, json.JSONDecodeError):
-                    groups = {}
-                stat = groups.get(session_id, {})
-                if not isinstance(stat, dict):
-                    stat = {}
-                groups[session_id] = {
-                    "score": int(stat.get("score", 0) or 0) + score,
-                    "games": int(stat.get("games", 0) or 0) + 1,
-                    "wins": int(stat.get("wins", 0) or 0) + (1 if won else 0),
-                }
-
-                await cursor.execute(
-                    """
-                    UPDATE user_stats SET user_name = ?, score = ?, games = ?, wins = ?,
-                                          sum_guesses = ?, best_guesses = ?, group_scores = ?
-                    WHERE user_id = ? AND platform_name = ?
-                    """,
-                    (
-                        user_name,
-                        _int("score") + score,
-                        games,
-                        wins,
-                        sum_guesses,
-                        best,
-                        json.dumps(groups, ensure_ascii=False),
-                        user_id,
-                        platform_name,
-                    ),
-                )
+                    await cursor.execute(
+                        """
+                        UPDATE user_stats SET user_name = ?, score = ?, games = ?, wins = ?,
+                                              sum_guesses = ?, best_guesses = ?, group_scores = ?
+                        WHERE user_id = ? AND platform_name = ?
+                        """,
+                        (
+                            user_name,
+                            _int("score") + safe_score,
+                            games,
+                            wins,
+                            sum_guesses,
+                            best,
+                            json.dumps(groups, ensure_ascii=False),
+                            user_id,
+                            platform_name,
+                        ),
+                    )
                 await conn.commit()
+            except Exception:
+                await conn.rollback()
+                raise
 
     # ---------- 排行榜查询 ----------
 
@@ -388,14 +392,6 @@ class DBService:
                 "global_rank": int(rank_row[0]) if rank_row else 1,
                 "group": group_stat,
             }
-
-    async def is_bound_official(self, user_id: str) -> bool:
-        async with self._get_conn() as conn:
-            async with conn.execute(
-                "SELECT 1 FROM account_bindings WHERE official_platform = ? AND official_user_id = ?",
-                (OFFICIAL_PLATFORM_NAME, str(user_id)),
-            ) as cursor:
-                return await cursor.fetchone() is not None
 
 
 def _merge_group_scores(source_value: str, target_value: str) -> str:

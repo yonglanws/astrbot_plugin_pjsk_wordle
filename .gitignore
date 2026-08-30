@@ -6,5 +6,6 @@ tests/_integration/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
-tests/
+tests/_render_out/
+tests/_integration/
 pyproject.toml

@@ -153,9 +153,6 @@ class DataService:
     def _server_dir(self, server: str) -> Path:
         return self.music_dir / server
 
-    def _server_file(self, server: str, filename: str) -> Path:
-        return self._server_dir(server) / filename
-
     @property
     def derived_path(self) -> dict[str, Path]:
         return {s: self._server_dir(s) / "derived.json" for s in (SERVER_JP, SERVER_SC)}
@@ -215,12 +212,6 @@ class DataService:
         if updated:
             return datetime.fromtimestamp(updated).strftime("%Y%m%d")
         return "unknown"
-
-    def get_server_label(self, server: str) -> str:
-        return SERVER_LABELS.get(server, server)
-
-    def is_ready(self, server: str) -> bool:
-        return bool(self.songs.get(server))
 
     # ---------- 周期更新 ----------
 
